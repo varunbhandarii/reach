@@ -1,0 +1,38 @@
+[project]
+name = "reach"
+version = "0.1.0"
+description = "Voice-guided hand-to-object finding for blind and low-vision people"
+readme = "README.md"
+authors = [
+    { name = "Varun Bhandari" },
+    { name = "Chaitanya Manik" },
+]
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "mediapipe>=1.1.1",
+    "meta-sam-parser>=0.1.0",
+    "numpy>=2.5.4",
+    "openai>=3.39.0",
+    "opencv-contrib-python>=4.14,<5",
+    "python-dotenv>=1.2.4",
+    "pyttsx3>=2.99 ; sys_platform == 'win32'",
+    "pyyaml>=6.0.3",
+    "sounddevice>=0.5.6",
+    "websockets>=17.3",
+]
+
+[project.scripts]
+reach = "reach:main"
+
+[build-system]
+requires = ["uv_build>=0.12.24,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
