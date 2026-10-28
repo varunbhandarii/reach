@@ -1,0 +1,51 @@
+"""JSON compatibility checks for shared data contracts."""
+
+import json
+from dataclasses import asdict, fields, is_dataclass
+
+import pytest
+
+from reach.types import (
+    Command,
+    CueParams,
+    Decision,
+    Frame,
+    HandObs,
+    Instance,
+    TargetObs,
+)
+
+
+def _restore(value, original):
+    if is_dataclass(original):
+        return type(original)(
+            **{
+                field.name: _restore(value[field.name], getattr(original, field.name))
+                for field in fields(original)
+            }
+        )
+    if isinstance(original, tuple):
+        return tuple(_restore(item, source) for item, source in zip(value, original, strict=True))
+    if isinstance(original, dict):
+        return {key: _restore(value[key], item) for key, item in original.items()}
+    return value
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        Frame(3, 1.25, 1_777_000_000.5, 640, 480, "abc123", "iphone_continuity"),
+        HandObs(3, True, (12.5, 22.5), (15.0, 24.0), ((1.0, 2.0), (3.0, 4.0)), (4.0, -2.0), 0.98),
+        Instance("14", (10, 20, 30, 40), 0.86, {"size": [20, 20], "counts": "abc"}),
+        TargetObs(3, "blue mug", (Instance("14", (10, 20, 30, 40), 0.86, None),), 0, "sam", 12.0),
+        Command("find", "blue mug", "find the blue mug", 7, 2.5),
+        CueParams(0.5, 440.0, 4.0, False, 0.2, 0.3),
+        Decision(11, 3.5, "GUIDING", 0.1, -0.2, 0.3, CueParams(0.5, 440.0, 4.0, False, 0.2, 0.3), None, "found"),
+    ],
+    ids=["frame", "hand-observation", "instance", "target-observation", "command", "cue", "decision"],
+)
+def test_contract_round_trips_through_json(sample):
+    encoded = json.dumps(asdict(sample), ensure_ascii=False)
+    decoded = json.loads(encoded)
+
+    assert _restore(decoded, sample) == sample
