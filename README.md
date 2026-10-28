@@ -18,6 +18,17 @@ uv run pytest
 
 Copy `.env.example` to `.env` and add your own Meta Model API key. Never commit `.env`.
 
+Camera, hand, audio, voice and speech interfaces currently contain simulation
+stubs. They return synthetic observations or retain requests without opening
+hardware or making API calls. They do not provide live guidance yet.
+
+Shared defaults live in `config.yaml`. Put machine-specific camera settings in
+the ignored `config.local.yaml`; nested values override the defaults. Keep API
+keys only in `.env`. Shared messages are defined in `src/reach/types.py`.
+
+MediaPipe Tasks can send usage and performance metrics to Google; see its
+[Python documentation](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker/python).
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
