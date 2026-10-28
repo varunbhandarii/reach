@@ -1,8 +1,10 @@
 # Reach
 
-Voice-guided hand-to-object finding for blind and low-vision people. Say what you are looking for, and a chest-worn phone camera finds it with Meta's SAM 3.1 while stereo sound cues guide your hand until you touch it.
+Voice-guided hand-to-object finding for blind and low-vision people, using a phone camera, Meta's SAM 3.1, and stereo sound cues.
 
 > **Status:** in development. Built during the Meta Global AI Developer Hackathon, Oct 27 to Nov 4, 2026.
+
+Current camera experiments include a handheld phone, with one hand holding the camera and the other reaching. A chest mount is available for the iPhone setup; stable body-worn operation has not yet been validated.
 
 Reach is a prototype for locating non-hazardous objects on a tabletop within arm's reach. It is not a medical device and not a mobility aid.
 
