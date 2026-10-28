@@ -1,6 +1,8 @@
 # Reach
 
-Voice-guided hand-to-object finding for blind and low-vision people. Say what you are looking for, and a chest-worn phone camera finds it with Meta's SAM 3.1 while stereo sound cues guide your hand until you touch it.
+Voice-guided hand-to-object finding for blind and low-vision people. Reach aims
+to find named tabletop objects with Meta's SAM 3.1 and use stereo sound cues to
+guide the reaching hand toward them.
 
 > **Status:** in development. Built during the Meta Global AI Developer Hackathon, Oct 27 to Nov 4, 2026.
 
@@ -21,6 +23,10 @@ Copy `.env.example` to `.env` and add your own Meta Model API key. Never commit 
 Camera, hand, audio, voice and speech interfaces currently contain simulation
 stubs. They return synthetic observations or retain requests without opening
 hardware or making API calls. They do not provide live guidance yet.
+
+Current camera checks use a phone held in one hand while the other hand reaches.
+Body-worn capture has not been validated. A phone supported steadily on the desk
+can be explored separately; camera placement must be reported with its results.
 
 Shared defaults live in `config.yaml`. Put machine-specific camera settings in
 the ignored `config.local.yaml`; nested values override the defaults. Keep API
