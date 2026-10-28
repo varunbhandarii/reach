@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-CONTRACT_VERSION = "0"
+CONTRACT_VERSION = "1"
 Source = Literal["android_mjpeg", "iphone_continuity", "usb_webcam", "file"]
 CommandKind = Literal[
     "find", "choose", "cancel", "start_over", "repeat", "recheck", "yes", "no", "stop", "unknown"
