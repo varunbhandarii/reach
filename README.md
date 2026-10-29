@@ -4,7 +4,7 @@ Voice-guided hand-to-object finding for blind and low-vision people, using a pho
 
 > **Status:** in development. Built during the Meta Global AI Developer Hackathon, Oct 27 to Nov 4, 2026.
 
-Current camera experiments include a handheld phone, with one hand holding the camera and the other reaching. A chest mount is available for the iPhone setup; stable body-worn operation has not yet been validated.
+Current camera experiments include a handheld phone, with one hand holding the camera and the other reaching. The iPhone also has a chest mount, with its owner reporting a stable feed during an initial movement check. Broader wearable performance has not been validated.
 
 Reach is a prototype for locating non-hazardous objects on a tabletop within arm's reach. It is not a medical device and not a mobility aid.
 
