@@ -9,8 +9,17 @@ sam:
   model: sam-3.1
   conf_min: 0.5
   tie_margin: 0.15
+  deadline_s: 3.0
+  cache: auto
+  cache_dir: runs/sam-cache
   rates_hz: {searching: 2.0, guiding: 0.5, guiding_near: 2.0}
   jpeg_quality: 80
+objects: [wallet, pen, ball, apple]
+motion:
+  method: homography
+  width: 640
+  history: 90
+  min_inliers: 15
 voice:
   model: muse-voice-transcribe-1.0
   mode: ENDPOINTING
