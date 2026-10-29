@@ -60,6 +60,7 @@ class TargetTracker:
         self.frame = self.gray = self.mask = self.image = None
         self._seed = self._seed_id = self._kcf = None
         self.stale = True
+        self._target_matrix = np.eye(3)
         self.roll_total = 0.0
         self._costs = deque(maxlen=600)
         self.motion = {"inliers": 0, "scale": 1.0, "rotation_deg": 0.0, "ms": 0.0}
@@ -120,6 +121,11 @@ class TargetTracker:
         while len(self.history) > self.depth:
             self.history.popitem(last=False)
         self.frame, self.gray, self.mask, self.image = frame, gray, mask, image
+        if self._seed is not None:
+            if valid and not self.stale:
+                self._target_matrix = matrix @ self._target_matrix
+            else:
+                self.stale = True
         if valid:
             self.roll_total += rotation
         self.motion = {"frame_id": frame.id, "inliers": inliers, "scale": scale,
@@ -132,6 +138,8 @@ class TargetTracker:
                 x, y, w, h = box
                 self._seed = replace(self._seed, box_xyxy=(int(x), int(y), int(x+w), int(y+h)), mask_rle=None)
                 self._seed_id = frame.id
+                self._target_matrix = np.eye(3)
+                self.stale = False
             else:
                 self.stale = True
         return self.current(), self.stale
@@ -160,6 +168,7 @@ class TargetTracker:
         if mapped is None:
             return False
         self._seed, self._seed_id = instance, frame_id
+        self._target_matrix = self.compose(frame_id)
         self.stale = False
         if self.method == "kcf":
             factory = getattr(cv2, "TrackerKCF_create", None) or cv2.legacy.TrackerKCF_create
@@ -167,6 +176,7 @@ class TargetTracker:
             x0, y0, x1, y1 = mapped.box_xyxy
             self._kcf.init(self.image, (x0, y0, x1-x0, y1-y0))
             self._seed, self._seed_id = mapped, self.frame.id
+            self._target_matrix = np.eye(3)
         return True
 
     def clear(self):
@@ -174,9 +184,9 @@ class TargetTracker:
         self.stale = True
 
     def current(self):
-        if self._seed is None:
+        if self._seed is None or self.stale:
             return None
-        mapped = self.map_instance(self._seed_id, self._seed)
+        mapped = transform_instance(self._seed, self._target_matrix, self.frame.width, self.frame.height)
         if mapped is None:
             self.stale = True
             return None

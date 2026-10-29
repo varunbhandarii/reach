@@ -58,3 +58,15 @@ def test_history_eviction_and_duplicate_frame():
     assert len(t.history) == 2
     t.update(frame(2), image)
     assert len(t.history) == 2
+
+
+def test_clicked_target_outlives_transform_ring():
+    t = TargetTracker({'motion': {'history': 2}})
+    image = texture()
+    t.update(frame(0), image)
+    assert t.reseed(0, Instance('click', (200, 200, 250, 250), 1, None))
+    for i in range(1, 5):
+        t.update(frame(i), image)
+    assert t.compose(0) is None
+    assert t.current() is not None and not t.stale
+    assert np.allclose(t.current().box_xyxy, (200, 200, 250, 250), atol=2)
