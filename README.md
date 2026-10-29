@@ -4,7 +4,7 @@ Voice-guided hand-to-object finding for blind and low-vision people, using a pho
 
 > **Status:** in development. Built during the Meta Global AI Developer Hackathon, Oct 27 to Nov 4, 2026.
 
-Current camera checks include Varun's handheld phone setup and Chaitanya's iPhone chest mount. Chaitanya reports that the feed stayed stable for at least 60 seconds while moving and reaching. This is an initial setup observation; broader wearable performance has not been validated.
+Current camera checks use a phone held in one hand while the other hand reaches, on both an Android phone and an iPhone. Body-worn capture has not been validated.
 
 Reach is a prototype for locating non-hazardous objects on a tabletop within arm's reach. It is not a medical device and not a mobility aid.
 
