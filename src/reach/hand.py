@@ -148,7 +148,7 @@ class HandTracker:
         self._mp = mp
         self._detector = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
             base_options=python.BaseOptions(model_asset_path=str(path)),
-            running_mode=vision.RunningMode.VIDEO, num_hands=2,
+            running_mode=vision.RunningMode.VIDEO, num_hands=int(self.cfg.get("max_hands", 2)),
             min_hand_detection_confidence=confidence, min_hand_presence_confidence=confidence,
             min_tracking_confidence=confidence))
 
@@ -207,7 +207,12 @@ class HandTracker:
         return {"hand_ms_p50": float(np.median(values)) if values else None,
                 "hand_ms_p95": float(np.percentile(values, 95)) if values else None,
                 "processed": len(values), "input_width": self.cfg.get("input_width"),
-                "upside_down": len(self._upside) >= 15 and sum(self._upside)/len(self._upside) > .7}
+                "max_hands": int(self.cfg.get("max_hands", 2)),
+                "upside_down": self.upside_down}
+
+    @property
+    def upside_down(self):
+        return bool(len(self._upside) >= 15 and sum(self._upside)/len(self._upside) > .7)
 
     def close(self):
         if self._detector is not None and hasattr(self._detector, "close"):

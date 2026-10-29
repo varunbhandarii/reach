@@ -73,3 +73,7 @@ def test_observe_timestamps_duplicates_hold_and_loss():
     assert tracker.observe(frame(1, 1.0001), image).present and tracker.held
     assert calls == [1000, 1001]
     assert not tracker.observe(frame(2, 1.31), image).present
+    tracker._upside.extend([np.bool_(True)]*30)
+    import json
+    assert type(tracker.upside_down) is bool
+    json.dumps(tracker.stats(), allow_nan=False)

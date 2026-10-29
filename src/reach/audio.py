@@ -49,11 +49,14 @@ def pluck(fs, frequencies, seconds):
 def make_earcons(fs):
     gap = np.zeros(round(fs*.015), np.float32)
     note = lambda f, s: pluck(fs, [f], s)
-    return {"found": np.concatenate([note(1046.5, .09), gap, note(1318.5, .13)]),
+    buffers = {"found": np.concatenate([note(1046.5, .09), gap, note(1318.5, .13)]),
             "lost": np.concatenate([note(1318.5, .09), gap, note(1046.5, .13)]),
             "reacquired": note(1396.9, .13),
             "contact": pluck(fs, [1046.5, 1318.5, 1568], .15),
             "wrong": np.concatenate([note(330, .08), gap, note(294, .08)])}
+    for buffer in buffers.values():
+        buffer /= max(.001, float(np.max(np.abs(buffer))))
+    return buffers
 
 
 class Tone:
