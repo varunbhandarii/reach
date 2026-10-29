@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"
 Source = Literal["android_mjpeg", "iphone_continuity", "usb_webcam", "file"]
 CommandKind = Literal[
     "find", "choose", "cancel", "start_over", "repeat", "recheck", "yes", "no", "stop", "unknown"
@@ -30,6 +30,8 @@ class HandObs:
     hull_px: tuple[tuple[float, float], ...]
     velocity_px_s: tuple[float, float]
     score: float
+    landmarks_px: tuple[tuple[float, float], ...] = ()
+    handedness: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,3 +82,5 @@ class Decision:
     cue: CueParams | None
     speech: str | None
     earcon: str | None
+    hand_frame_id: int | None = None
+    target_frame_id: int | None = None
