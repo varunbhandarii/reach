@@ -16,7 +16,6 @@ from reach.voice import VoiceClient
 def test_output_stubs_do_not_trigger_io():
     cue = CueParams(0, 440, 4, False, 0, .2)
     audio = CueEngine({})
-    audio.start()
     audio.set(cue)
     audio.duck(True)
     audio.earcon("contact")
