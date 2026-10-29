@@ -34,3 +34,37 @@ MediaPipe Tasks can send usage and performance metrics to Google; see its
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Target perception integration
+
+`Perception(config, camera, log)` runs scene motion and one segmentation worker.
+The camera must already be open and running. It supplies
+`wait_newer(last_id, timeout) -> (Frame, image) | None` and
+`get_jpeg(frame_id) -> bytes | None`; each frame hash must match that JPEG.
+Call `start()`, `set_phrase("wallet")` or `select_point(x, y)`, and feed hand
+observations with `on_hand(hand)`. Read `latest()` for guidance and `stats()`
+for overlay diagnostics. Call `stop()` before closing `EventLog`.
+
+`latest()` returns no target when motion fails or camera frames are over
+500 ms old. A new SAM result can recover a lost target. Use a textured table
+or placemat. `motion.method: kcf` selects the appearance-tracker fallback;
+its masks are unavailable and it can follow the hand during occlusion.
+`force_query()` requests a refresh while retaining the idle, backoff and
+one-request guards. Unknown and idle states send no images.
+
+Only `sam-3.1` is accepted by the segmentation client. It makes one streaming
+request with no retries and a three-second deadline. Frames and a noun phrase
+are sent to Meta's standard API in phrase mode. Click mode makes no API calls.
+Default objects are wallet, pen, ball and apple; other nouns in the voice
+keywords file have not been measured on these setups.
+
+Set `sam.cache` in the configuration to `off`, `read` or `write`. The default
+`auto` uses `write` for file sources and `off` for live sources. `write` reads
+existing entries and populates misses; misses send an image. `read` is strictly
+local and reports a miss without calling the API. The runner can map its
+`--sam-cache` option to this setting. Cache files live under ignored
+`runs/sam-cache/` and are keyed by image bytes, phrase, model, confidence cutoff
+and dimensions. Run folders can contain sensitive images; keep them local.
+
+The camera, hand, audio and command interfaces still use simulation stubs on
+this branch. A real capture source and runner are required for live guidance.

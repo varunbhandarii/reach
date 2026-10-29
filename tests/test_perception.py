@@ -59,13 +59,13 @@ def test_one_inflight_and_changed_phrase_drops_old_response():
     job = p._jobs.get_nowait()
     for i in range(1, 4):
         p.process(c.frame(i), c.image)
-    assert p.stats()['images_sent'] == 1
+    assert p._req_id == 1
     p.set_phrase('apple')
     p._results.put((job, (Instance('1', (100, 200, 150, 250), .9, None),), None, 100))
     p.process(c.frame(4), c.image)
     assert p.latest() is None
     assert p.stats()['responses_dropped'] == 1
-    assert p.stats()['images_sent'] == 2
+    assert p._req_id == 2
 
 
 def test_selection_preserves_overlap_and_marks_ambiguity():
@@ -97,3 +97,45 @@ def test_deadline_drop_even_with_valid_history():
     p._results.put((job, (Instance('1', (100, 200, 150, 250), .9, None),), None, 4000))
     p.process(c.frame(1), c.image)
     assert p.latest() is None and p.stats()['responses_dropped'] == 1
+
+
+def test_latest_silences_disconnected_camera():
+    c = Camera()
+    p = Perception({}, c, None, clock=lambda: 100)
+    p.select_point(300, 250)
+    f = replace(c.frame(0), t_mono=99)
+    p.process(f, c.image)
+    assert p.latest() is None
+
+
+def test_real_worker_never_overlaps_calls_and_stops():
+    c = Camera()
+    released = threading.Event()
+    entered = threading.Event()
+    calls = []
+    def segment(*args):
+        calls.append(args)
+        entered.set()
+        assert released.wait(2)
+        return (Instance('1', (100, 200, 150, 250), .9, None),)
+    p = Perception({}, c, None, segmenter=segment)
+    p.set_phrase('wallet')
+    worker = threading.Thread(target=p._sam_worker)
+    worker.start()
+    try:
+        p.process(c.frame(0), c.image)
+        assert entered.wait(2)
+        for i in range(1, 8):
+            p.process(c.frame(i), c.image)
+        assert len(calls) == 1
+        released.set()
+        deadline = time.perf_counter()+2
+        while p._results.empty() and time.perf_counter() < deadline:
+            time.sleep(.005)
+        p.process(c.frame(8), c.image)
+        assert p.latest() is not None
+    finally:
+        released.set()
+        p._stop.set()
+        worker.join(2)
+    assert not worker.is_alive()
