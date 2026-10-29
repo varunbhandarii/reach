@@ -1,0 +1,99 @@
+from dataclasses import replace
+from hashlib import sha256
+import threading
+import time
+import cv2
+import numpy as np
+from reach.perception import Perception
+from reach.scheduler import QueryScheduler
+from reach.types import Frame, Instance
+
+
+class Camera:
+    def __init__(self):
+        self.image = cv2.GaussianBlur(np.random.default_rng(6).integers(0, 256, (480, 640, 3), np.uint8), (5, 5), 0)
+        self.jpeg = cv2.imencode('.jpg', self.image)[1].tobytes()
+    def get_jpeg(self, frame_id):
+        return self.jpeg
+    def frame(self, i):
+        return Frame(i, time.perf_counter(), 0, 640, 480, sha256(self.jpeg).hexdigest(), 'file')
+
+
+def test_scheduler_silence_rates_backoff_and_inflight():
+    s = QueryScheduler()
+    for state in ('IDLE', 'UNKNOWN', 'STOPPED', 'CONTACT'):
+        assert not s.should_query(state, False, 0)
+    assert s.should_query('SEARCHING', False, 0)
+    assert not s.should_query('SEARCHING', False, .4)
+    assert s.should_query('SEARCHING', False, .5)
+    assert not s.should_query('GUIDING', True, 1)
+    assert s.should_query('GUIDING', True, 2.5)
+    assert s.should_query('GUIDING', True, 3, near=True)
+    assert not s.should_query('SEARCHING', False, 4, in_flight=True)
+    s.backoff(4, 3)
+    s.force()
+    assert not s.should_query('SEARCHING', False, 6)
+    assert s.should_query('SEARCHING', False, 7)
+
+
+def test_click_and_idle_do_not_send_requests():
+    c = Camera()
+    p = Perception({}, c, None)
+    p.process(c.frame(0), c.image)
+    assert p.stats()['images_sent'] == 0
+    p.select_point(300, 250)
+    p.process(c.frame(1), c.image)
+    assert p.latest().instances[0].box_xyxy == (260, 210, 340, 290)
+    assert p.stats()['images_sent'] == 0
+    p.set_phrase(None)
+    assert p.latest() is None
+    p.process(c.frame(2), c.image)
+    assert p.latest() is None
+
+
+def test_one_inflight_and_changed_phrase_drops_old_response():
+    c = Camera()
+    p = Perception({}, c, None)
+    p.set_phrase('wallet')
+    p.process(c.frame(0), c.image)
+    job = p._jobs.get_nowait()
+    for i in range(1, 4):
+        p.process(c.frame(i), c.image)
+    assert p.stats()['images_sent'] == 1
+    p.set_phrase('apple')
+    p._results.put((job, (Instance('1', (100, 200, 150, 250), .9, None),), None, 100))
+    p.process(c.frame(4), c.image)
+    assert p.latest() is None
+    assert p.stats()['responses_dropped'] == 1
+    assert p.stats()['images_sent'] == 2
+
+
+def test_selection_preserves_overlap_and_marks_ambiguity():
+    c = Camera()
+    p = Perception({}, c, None)
+    p.set_phrase('apple')
+    p.process(c.frame(0), c.image)
+    job = p._jobs.get_nowait()
+    instances = (Instance('a', (100, 200, 150, 250), .95, None), Instance('b', (300, 200, 350, 250), .9, None))
+    p._results.put((job, instances, None, 100))
+    p.process(c.frame(1), c.image)
+    assert p.latest().instances[0].sam_id == 'a'
+    assert p.stats()['ambiguous']
+    # Refresh confidence favours b, but overlap keeps a.
+    job = {**job, 'frame': c.frame(1), 'submitted': time.perf_counter()}
+    p._inflight = job
+    p._results.put((job, (replace(instances[0], conf=.8), replace(instances[1], conf=.99)), None, 100))
+    p.process(c.frame(2), c.image)
+    assert p.latest().instances[0].sam_id == 'a'
+
+
+def test_deadline_drop_even_with_valid_history():
+    c = Camera()
+    p = Perception({}, c, None)
+    p.set_phrase('wallet')
+    p.process(c.frame(0), c.image)
+    job = p._jobs.get_nowait()
+    job['submitted'] -= 4
+    p._results.put((job, (Instance('1', (100, 200, 150, 250), .9, None),), None, 4000))
+    p.process(c.frame(1), c.image)
+    assert p.latest() is None and p.stats()['responses_dropped'] == 1
