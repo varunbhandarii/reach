@@ -12,3 +12,8 @@ start over
 which one
 recheck
 stop
+
+wallet
+pen
+ball
+apple

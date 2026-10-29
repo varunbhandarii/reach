@@ -48,3 +48,26 @@ def test_rejects_invalid_data_and_writes_nothing(tmp_path):
     event_log.close()
 
     assert (tmp_path / "events.jsonl").read_text(encoding="utf-8") == ""
+
+
+def test_concurrent_producers_and_pending_writes_drain(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    with EventLog(tmp_path) as log:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(lambda i: log.emit("test", {"i": i}), range(300)))
+        log.write_manifest({"models": {"sam": "sam-3.1"}})
+        log.save_frame(7, b"jpeg")
+    records = [json.loads(line) for line in log.path.read_text().splitlines()]
+    assert [r["seq"] for r in records] == list(range(300))
+    assert len({r["data"]["i"] for r in records}) == 300
+    assert (tmp_path / "frames/7.jpg").read_bytes() == b"jpeg"
+    assert json.loads((tmp_path / "manifest.json").read_text())["models"]["sam"] == "sam-3.1"
+    log.close()
+    with pytest.raises(ValueError):
+        log.emit("late", {})
+
+
+def test_frame_saving_can_be_disabled(tmp_path):
+    with EventLog(tmp_path, save_frames=False) as log:
+        log.save_frame(2, b"jpeg")
+    assert not (tmp_path / "frames").exists()
