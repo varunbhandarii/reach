@@ -59,13 +59,13 @@ def test_one_inflight_and_changed_phrase_drops_old_response():
     job = p._jobs.get_nowait()
     for i in range(1, 4):
         p.process(c.frame(i), c.image)
-    assert p.stats()['images_sent'] == 1
+    assert p._req_id == 1
     p.set_phrase('apple')
     p._results.put((job, (Instance('1', (100, 200, 150, 250), .9, None),), None, 100))
     p.process(c.frame(4), c.image)
     assert p.latest() is None
     assert p.stats()['responses_dropped'] == 1
-    assert p.stats()['images_sent'] == 2
+    assert p._req_id == 2
 
 
 def test_selection_preserves_overlap_and_marks_ambiguity():

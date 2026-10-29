@@ -10,6 +10,7 @@ import time
 import cv2
 
 from .sam_client import SamClient, SamError, SamRateLimited
+from .sam_cache import SamCache, CacheMiss
 from .scheduler import QueryScheduler
 from .tracker import TargetTracker, box_iou
 from .types import Instance, TargetObs
@@ -27,6 +28,7 @@ class Perception:
         self.tracker = TargetTracker(cfg)
         self.scheduler = QueryScheduler(cfg)
         self._segment = segmenter or SamClient(cfg).segment
+        self._cache = SamCache(cfg)
         self._clock = clock
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -119,7 +121,21 @@ class Perception:
                 break
             started = self._clock()
             try:
-                result, error = self._segment(job["jpeg"], job["phrase"], job["frame"]), None
+                result = self._cache.read(job["jpeg"], job["phrase"], job["frame"])
+                if result is not None:
+                    with self._lock:
+                        self._metrics["cache_hits"] += 1
+                    self._emit("sam_cache", {"req_id": job["id"], "frame_id": job["frame"].id, "hit": True})
+                else:
+                    if self._cache.mode == "read":
+                        raise CacheMiss("no cached segmentation; read mode does not send images")
+                    with self._lock:
+                        self._metrics["images_sent"] += 1
+                    self._emit("sam_req", {"req_id": job["id"], "frame_id": job["frame"].id,
+                        "phrase": job["phrase"], "jpeg_bytes": len(job["jpeg"])})
+                    result = self._segment(job["jpeg"], job["phrase"], job["frame"])
+                    self._cache.write(job["jpeg"], job["phrase"], job["frame"], result)
+                error = None
             except Exception as exc:
                 result = ()
                 error = exc if isinstance(exc, SamError) else SamError("segmentation worker failed")
@@ -160,7 +176,7 @@ class Perception:
                 self._metrics["errors"] += 1
                 if isinstance(error, SamRateLimited):
                     self.scheduler.backoff(self._clock(), error.retry_after)
-                elif error.kind == "permanent":
+                elif error.kind in ("permanent", "cache_miss"):
                     self._fatal = str(error)
                 else:
                     self.scheduler.backoff(self._clock(), 1)
@@ -249,6 +265,4 @@ class Perception:
                    "generation": self._generation, "submitted": now}
             self._req_id += 1
             self._inflight = job
-            self._metrics["images_sent"] += 1
-            self._emit("sam_req", {"req_id": job["id"], "frame_id": frame.id, "phrase": self._phrase, "jpeg_bytes": len(jpeg)})
             self._jobs.put_nowait(job)
