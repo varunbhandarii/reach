@@ -41,3 +41,42 @@ def test_client_guards_and_backoff():
         SamClient().segment(b'', 'wallet', FRAME)
     assert retry_seconds('2.5') == 2.5
     assert retry_seconds('bad') == 1
+
+
+def test_stream_transport_status_and_completion(monkeypatch):
+    import io
+    import json
+    from reach.sam_client import SamRateLimited, SamNetworkError, SamTimeout
+    payload = b''.join(('data: '+json.dumps(e)+'\n\n').encode() for e in [
+        {'type': 'response.output_text.delta', 'delta': TEXT}, {'type': 'response.completed'}])
+    class Response(io.BytesIO):
+        status = 200
+        def getheader(self, name):
+            return '2'
+    class Connection:
+        sock = None
+        def __init__(self, *args, **kwargs): pass
+        def request(self, *args): self.body = args[2]
+        def getresponse(self): return response
+        def close(self): pass
+    monkeypatch.setattr('reach.sam_client.http.client.HTTPSConnection', Connection)
+    response = Response(payload)
+    assert SamClient(api_key='test-placeholder').segment(b'jpeg', 'wallet', FRAME)[0].sam_id == '0'
+    response = Response(b'')
+    response.status = 429
+    with pytest.raises(SamRateLimited) as err:
+        SamClient(api_key='test-placeholder').segment(b'jpeg', 'wallet', FRAME)
+    assert err.value.retry_after == 2
+    response.status = 400
+    with pytest.raises(SamPermanentError):
+        SamClient(api_key='test-placeholder').segment(b'jpeg', 'wallet', FRAME)
+    response.status = 200
+    with pytest.raises(SamNetworkError):
+        SamClient(api_key='test-placeholder').segment(b'jpeg', 'wallet', FRAME)
+    def slow():
+        import time
+        time.sleep(.04)
+        return Response(payload)
+    Connection.getresponse = lambda self: slow()
+    with pytest.raises(SamTimeout):
+        SamClient({'sam': {'deadline_s': .02}}, api_key='test-placeholder').segment(b'jpeg', 'wallet', FRAME)

@@ -27,7 +27,8 @@ def test_read_mode_miss_never_calls_network(tmp_path):
     called = []
     p = Perception({'sam': {'cache': 'read', 'cache_dir': str(tmp_path)}}, None, None,
                    segmenter=lambda *args: called.append(args))
-    job = {'id': 0, 'frame': F, 'jpeg': b'jpeg', 'phrase': 'wallet', 'generation': 0, 'submitted': time.perf_counter()}
+    p.set_phrase('wallet')
+    job = {'id': 0, 'frame': F, 'jpeg': b'jpeg', 'phrase': 'wallet', 'generation': p._generation, 'submitted': time.perf_counter()}
     p._jobs.put(job)
     worker = threading.Thread(target=p._sam_worker)
     worker.start()

@@ -57,6 +57,7 @@ class Perception:
 
     def stop(self):
         self._stop.set()
+        self._target = None
         if self._thread:
             self._thread.join(timeout=4)
         if self._worker_thread:
@@ -88,6 +89,7 @@ class Perception:
         with self._lock:
             self._state = state.upper()
             if self._state in ("IDLE", "STOPPED"):
+                self._generation += 1
                 self._target = None
 
     def force_query(self):
@@ -99,7 +101,11 @@ class Perception:
         self._hand = hand
 
     def latest(self) -> TargetObs | None:
-        return self._target
+        target = self._target
+        frame = self.tracker.frame
+        if frame is None or self._clock()-frame.t_mono > .5:
+            return None
+        return target
 
     def stats(self):
         with self._lock:
@@ -120,6 +126,11 @@ class Perception:
             if self._stop.is_set():
                 break
             started = self._clock()
+            with self._lock:
+                cancelled = job["generation"] != self._generation or self._state in ("IDLE", "STOPPED")
+            if cancelled:
+                self._results.put((job, (), None, 0.0))
+                continue
             try:
                 result = self._cache.read(job["jpeg"], job["phrase"], job["frame"])
                 if result is not None:
@@ -177,7 +188,8 @@ class Perception:
                 if isinstance(error, SamRateLimited):
                     self.scheduler.backoff(self._clock(), error.retry_after)
                 elif error.kind in ("permanent", "cache_miss"):
-                    self._fatal = str(error)
+                    if job["generation"] == self._generation:
+                        self._fatal = str(error)
                 else:
                     self.scheduler.backoff(self._clock(), 1)
             invalid = (job["generation"] != self._generation or self._mode != "phrase"

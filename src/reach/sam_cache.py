@@ -3,10 +3,12 @@
 from dataclasses import asdict
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import tempfile
 
 from .sam_client import SamError
+from .masks import decode_rle
 from .types import Instance
 
 
@@ -46,6 +48,10 @@ class SamCache:
             for item in instances:
                 x0, y0, x1, y1 = item.box_xyxy
                 if not (0 <= x0 < x1 <= frame.width and 0 <= y0 < y1 <= frame.height):
+                    return None
+                if not isinstance(item.sam_id, str) or item.conf is None or not math.isfinite(item.conf) or not self.conf_min <= item.conf <= 1:
+                    return None
+                if item.mask_rle is not None and decode_rle(item.mask_rle).shape != (y1-y0, x1-x0):
                     return None
             return instances
         except (OSError, ValueError, KeyError, TypeError):

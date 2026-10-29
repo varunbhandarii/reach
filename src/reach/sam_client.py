@@ -127,10 +127,11 @@ class SamClient:
         start = time.perf_counter()
         connection = http.client.HTTPSConnection("api.meta.ai", timeout=self.deadline_s)
         expired = threading.Event()
+        active_socket = [None]
 
         def abort():
             expired.set()
-            sock = connection.sock
+            sock = connection.sock or active_socket[0]
             if sock is not None:
                 try:
                     sock.shutdown(socket.SHUT_RDWR)
@@ -144,6 +145,9 @@ class SamClient:
         try:
             connection.request("POST", "/v1/responses", body, {"Authorization": "Bearer " + key,
                 "Content-Type": "application/json", "Accept": "text/event-stream"})
+            active_socket[0] = connection.sock
+            if expired.is_set():
+                raise SamTimeout("SAM exceeded its total deadline")
             response = connection.getresponse()
             if response.status == 429:
                 raise SamRateLimited(retry_seconds(response.getheader("Retry-After")))
