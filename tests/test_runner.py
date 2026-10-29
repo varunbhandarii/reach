@@ -116,3 +116,28 @@ def test_mount_is_required_and_headless_trials_rejected():
     args = parser().parse_args(["run", "--mount", "handheld", "--headless", "--trials", "5"])
     with pytest.raises(ValueError):
         configure(args)
+
+
+def test_trial_target_controls_preserve_scripted_phrases():
+    calls = []
+    runner = Runner.__new__(Runner)
+    runner.log = NS(emit=lambda *args: None)
+    runner.audio = FakeAudio({})
+    runner.perception = NS(select_point=lambda *args: calls.append(("point", args)),
+                           set_phrase=lambda value: calls.append(("phrase", value)),
+                           force_query=lambda: calls.append(("recheck",)))
+    runner.cfg = {"objects": ["wallet", "pen"]}
+    runner._trial = NS(mode="phrase", started=None, prepared=True)
+    runner._mouse(cv2.EVENT_LBUTTONDOWN, 50, 60, None, None)
+    runner._key(ord("1"), None)
+    runner._key(ord("c"), None)
+    assert calls == []
+    runner._key(ord("r"), None)
+    assert calls == [("recheck",)]
+    runner._trial.mode = "click"
+    runner._mouse(cv2.EVENT_LBUTTONDOWN, 50, 60, None, None)
+    assert calls[-1] == ("point", (50, 60))
+    runner._trial.started = 1
+    before = len(calls)
+    runner._mouse(cv2.EVENT_LBUTTONDOWN, 80, 90, None, None)
+    assert len(calls) == before

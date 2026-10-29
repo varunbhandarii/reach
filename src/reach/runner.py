@@ -145,7 +145,10 @@ class Runner:
         self.log.emit("ui", {"phrase": phrase})
 
     def _mouse(self, event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN and not (self._trial and self._trial.started is not None):
+        if self._trial and (self._trial.mode != "click" or self._trial.started is not None
+                            or not self._trial.prepared):
+            return
+        if event == cv2.EVENT_LBUTTONDOWN:
             self.audio.set(None)
             self.perception.select_point(x, y)
             self.log.emit("ui", {"click": [x, y]})
@@ -170,7 +173,9 @@ class Runner:
             self.audio.set(None)
             if not self._muted and not self.audio.running:
                 self.audio.start()
-        elif self._trial and self._trial.started is not None:
+        elif self._trial:
+            if key == ord("r"):
+                self.perception.force_query()
             return
         elif key == ord("c"):
             self._select_phrase(None)
