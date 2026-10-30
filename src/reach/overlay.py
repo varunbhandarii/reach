@@ -24,7 +24,23 @@ def draw_overlay(image, hand, target, decision, stats, *, muted=False, trial=Non
             f"fps {stats.get('capture_fps', 0):.1f}  cost ~${stats.get('estimated_cost_usd', 0):.3f}",
             f"SAM age {target.age_ms:.0f} ms" if target else "No current target",
             f"pan {cue.pan:+.2f}  pitch {cue.freq_hz:.0f} Hz  pulse {cue.pulse_hz:.1f} Hz" if cue else "Guide silent",
-            "1-4 object | click point | c clear | m mute | r recheck | q quit"]
+            "1-4 find | C cancel | R recheck | V talk | Y/N | M mute | Q quit"]
+    voice = stats.get('voice', {})
+    speech = stats.get('speech', {})
+    contact = stats.get('contact', {})
+    rows.append('Voice '+('off' if voice.get('enabled') is False else 'online' if voice.get('connected') else 'offline')
+                + (' | tap V again to finish' if voice.get('ptt_active') else ''))
+    if voice.get('stereo_ok') is False:
+        rows.append('STEREO UNAVAILABLE: guidance muted; check audio routing')
+    if voice.get('last_transcript'):
+        rows.append('Heard: '+voice['last_transcript'][:75])
+    caption = speech.get('text') or speech.get('caption')
+    if caption:
+        rows.append('Speech: '+caption[:75])
+    if speech.get('error'):
+        rows.append('Speech unavailable; captions only')
+    if contact:
+        rows.append(f"Contact: inside={contact.get('inside')} still={contact.get('still')} overlap={contact.get('overlap')}")
     if stats.get("roll_warning"):
         rows.append("Keep phone level: camera roll exceeds 20 degrees")
     if stats.get("upside_down"):

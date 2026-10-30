@@ -23,17 +23,6 @@ def test_output_stubs_do_not_trigger_io():
     audio.set(None)
     assert audio.cue is None
     audio.stop()
-    speaker = Speaker({})
-    speaker.say("Found the mug")
-    assert not speaker.busy()
-    speaker.stop()
-    commands = []
-    voice = VoiceClient({}, commands.append)
-    voice.start()
-    assert voice.running and commands == []
-    voice.on_command(Command("find", "mug", "find mug", None, 10.0))
-    assert commands[0].phrase == "mug"
-    voice.stop()
 
 
 def test_local_configuration_merges_nested_defaults(tmp_path):

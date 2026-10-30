@@ -21,9 +21,10 @@ uv run pytest
 Copy `.env.example` to `.env` and add your own Meta Model API key. Never commit `.env`.
 
 Capture, hand tracking, stereo guidance, target perception and the overlay are
-implemented. Voice commands, spoken read-back and automatic contact detection
-are still under development. Touch outcomes in timed trials are entered by the
-operator.
+implemented. This branch adds microphone streaming, local speech mixing and
+session integration against the shared reducer interfaces. The shared grammar,
+reducer and contact modules must be integrated before `reach run` can start.
+The independent `reach speak` command works without those modules.
 
 Save the [official hand model](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task)
 as `models/hand_landmarker.task`, or set `hand.model_path` in your local config.
@@ -38,7 +39,9 @@ uv run reach earcons
 
 Click a point to guide toward it without API requests. Keys 1–4 choose wallet,
 pen, ball and apple and send images to the configured Meta segmentation API;
-`c` clears, `r` rechecks, `m` toggles sound and `q` quits. File runs use the cache
+`c` cancels, `r` rechecks, `y`/`n` answer, `m` toggles sound and `q` quits.
+`v` starts tap-to-talk; tap it again after speaking to request the final transcript.
+File runs use the cache
 automatically; `--sam-cache read` prevents network requests on cache misses.
 
 `--predict 0` disables velocity prediction; `--predict 0.5` enables it. Hand
@@ -47,15 +50,30 @@ performance fallback for a single reaching hand; it disables two-hand selection.
 The overlay detects an inverted wrist orientation; use `--flip off` or `on`
 after checking cue directions if automatic flipping is unsuitable.
 
-Run `--duration 600` for an endurance recording. Optional `--trials 5
---trial-mode click` or `phrase` provides timed trials: Space starts once a target
-is ready, `t` records a reported touch, `f` records failure, and `n` prepares the
-next trial. The default time limit is 45 seconds. These keys record operator
-reports; fingertip proximity never counts as a touch automatically.
+Live runs open the configured microphone and stream audio to Meta for commands.
+`--no-voice` disables this; file and muted runs disable it unless `--voice` is
+explicit. `--voice-input "Microphone Array"` selects the laptop input on Windows.
+Use headphones to keep synthesized speech out of the microphone. `--speech off`
+keeps captions without spoken output; `--contact off` disables automatic contact.
+
+Run `--duration 600 --speech-every 5` for an endurance run with periodic local
+speech. Optional `--trials 5 --trial-mode click`, `phrase` or `voice` provides
+timed trials. Voice mode announces the scripted target and waits for its find
+command. Space starts once a target is ready; for an eyes-covered trial press
+Space with eyes open, then cover eyes before reaching. Stop reaching before
+uncovering to press `t` for a reported touch or `f` for failure. `n` prepares the
+next trial. The default time limit is 45 seconds. Automatic contact timestamps
+and operator reports are recorded separately; a chime does not establish touch.
 
 Each run saves a manifest, events, JPEG frames and a summary under ignored
-`runs/`. `uv run reach report path/to/run` summarizes timing, audio underflows and
-trial paths. `--camera-latency-ms` adds an earlier measured camera median to a
+`runs/`. Logs can contain microphone transcripts as well as images; keep runs
+local and do not commit them. Raw microphone audio is not saved.
+`uv run reach report path/to/run` summarizes voice and speech timing, reconnects,
+state durations, contact firings, audio underflows and trial paths.
+Voice latency measures receipt of the server's speech-end event to receipt of
+the complete turn. Tap-to-talk measures the second tap to the final transcript;
+the two measurements have different starting points.
+`--camera-latency-ms` adds an earlier measured camera median to a
 component estimate; this is not a measured end-to-end latency distribution.
 
 Shared defaults live in `config.yaml`. Put machine-specific camera settings in
@@ -100,9 +118,16 @@ local and reports a miss without calling the API. The runner can map its
 `runs/sam-cache/` and are keyed by image bytes, phrase, model, confidence cutoff
 and dimensions. Run folders can contain sensitive images; keep them local.
 
-Live camera capture, hand tracking, stereo guidance, overlay and run logging
-are implemented. Voice-command and speech-output interfaces still contain
-simulation stubs.
+## Local speech
+
+`uv run reach speak "Found the wallet." --count 5` synthesizes speech into the
+configured stereo guidance stream without opening the camera or microphone.
+Windows uses SAPI in memory; macOS expects the shared `say_engine` adapter.
+Unavailable engines retain captions and report a fallback. Linux uses silent
+samples for device-free tests. These fallbacks do not validate audible speech.
+Speech is cached and trimmed before playback, and ducks guidance by 16 dB.
+The reported first-audio time ends at the output callback; it excludes the
+device's acoustic playback delay.
 
 Late segmentation results also receive a conservative appearance check using
 `camera.get(frame_id)` and the stored source mask. A large color disagreement

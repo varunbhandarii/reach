@@ -59,3 +59,16 @@ def test_device_names_are_scoped_to_host(monkeypatch):
     assert select_output({"host_api": "Windows WASAPI", "output_device": "Headphones"})[0] == 1
     with pytest.raises(ValueError):
         select_output({"host_api": "Windows WASAPI", "output_device": 0})
+
+
+def test_render_reuses_preallocated_audio_buffers(monkeypatch):
+    tone = Tone()
+    output = np.empty((256, 2), np.float32)
+    cue = CueParams(.2, 550, 5, False, .1, .2)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Audio buffer allocation during rendering')
+    for name in ('array', 'arange', 'empty', 'zeros', 'repeat', 'column_stack'):
+        monkeypatch.setattr(np, name, forbidden)
+    for _ in range(10):
+        tone.render(output, cue)
+    assert np.isfinite(output).all()

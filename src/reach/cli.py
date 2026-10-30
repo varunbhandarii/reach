@@ -32,12 +32,23 @@ def parser():
     run.add_argument("--flip", choices=["auto", "on", "off"], default="auto")
     run.add_argument("--camera-latency-ms", type=float, help="Previously measured camera median, for a component latency estimate")
     run.add_argument("--trials", type=int, default=0)
-    run.add_argument("--trial-mode", choices=["click", "phrase"], default="phrase")
+    run.add_argument("--trial-mode", choices=["click", "phrase", "voice"], default="phrase")
+    run.add_argument('--no-voice', action='store_true', help='Do not open or upload microphone audio')
+    run.add_argument('--voice', action='store_true', help='Explicitly enable microphone streaming with file or muted sources')
+    run.add_argument('--voice-input', help='Microphone name on the native host API')
+    run.add_argument('--speech', choices=['on', 'off'], default='on')
+    run.add_argument('--contact', choices=['on', 'off'], default='on')
+    run.add_argument('--speech-every', type=float, default=0, help='Optional interval for a local speech load probe')
     run.add_argument("--trial-seed", type=int, default=1)
     run.add_argument("--trial-seconds", type=float, default=45)
     commands.add_parser("devices", help="List audio devices and host APIs")
     ears = commands.add_parser("earcons", help="Listen to each earcon on the configured stereo output")
     ears.add_argument("--config", type=Path)
+    speak = commands.add_parser('speak', help='Render local speech through the configured cue output')
+    speak.add_argument('text')
+    speak.add_argument('--config', type=Path)
+    speak.add_argument('--count', type=int, default=1)
+    speak.add_argument('--log-dir', type=Path, default=Path('runs/speech'))
     report = commands.add_parser("report", help="Summarize one saved run")
     report.add_argument("run_dir", type=Path)
     replay = commands.add_parser("replay-contact", help="Replay contact geometry from a saved local run")
@@ -74,6 +85,13 @@ def configure(args):
         cfg.setdefault("hand", {})["max_hands"] = args.max_hands
     if args.motion_width is not None:
         cfg.setdefault("motion", {})["width"] = args.motion_width
+    cfg.setdefault('voice', {})['enabled'] = (not args.no_voice and
+        (args.voice or (camera.get('source') != 'file' and not args.mute)))
+    if args.voice_input:
+        cfg['voice']['input_device'] = args.voice_input
+    cfg.setdefault('tts', {})['enabled'] = args.speech == 'on' and not args.mute
+    cfg.setdefault('contact', {})['enabled'] = args.contact == 'on'
+    cfg.setdefault('brain', {})['prediction'] = args.predict
     if args.duration < 0 or args.trials < 0 or args.trial_seconds <= 0:
         raise ValueError("Duration and trial counts must be nonnegative, trial time positive")
     if args.camera_latency_ms is not None and args.camera_latency_ms < 0:
@@ -84,6 +102,10 @@ def configure(args):
         raise ValueError("Choose either a phrase or a clicked point")
     if args.trials and (args.phrase or args.click):
         raise ValueError("Trial mode chooses its own target")
+    if args.trial_mode == 'voice' and args.trials and not cfg['voice']['enabled']:
+        raise ValueError('Voice trials require microphone streaming')
+    if args.speech_every < 0:
+        raise ValueError('Speech interval cannot be negative')
     return cfg
 
 
@@ -119,13 +141,56 @@ def main(argv=None):
             from .session_report import summarize
             print(json.dumps(summarize(args.run_dir), indent=2))
             return 0
+        if args.command == 'speak':
+            return speech_probe(args)
         cfg = configure(args)
         from .runner import Runner
         return Runner(cfg, args).run()
+    except ImportError:
+        print('Shared session modules are not available. Update to the integrated session build.', file=sys.stderr)
+        return 2
     except (ValueError, OSError, RuntimeError) as exc:
         # Device/config errors are actionable; never echo arbitrary network exception bodies.
         print(f"Cannot start Reach ({type(exc).__name__}). Check config, camera, hand model and audio device.", file=sys.stderr)
         return 2
+
+
+def speech_probe(args):
+    from datetime import datetime, timezone
+    from .audio import CueEngine
+    from .tts import Speaker
+    from .log import EventLog
+    if args.count < 1 or args.count > 100:
+        raise ValueError('Speech count must be between 1 and 100')
+    cfg = load_config(args.config)
+    root = args.log_dir/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+    audio = CueEngine(cfg)
+    with EventLog(root, save_frames=False) as log:
+        speaker = Speaker(cfg, audio, log)
+        log.write_manifest({'mount': 'fixed', 'source': 'speech_only', 'objects': cfg.get('objects', []),
+                            'prediction': 0, 'latency_note': 'Speech starts at the output callback; acoustic output delay is separate.'})
+        try:
+            audio.start()
+            speaker.start()
+            for _ in range(args.count):
+                speaker.say(args.text, priority=1)
+                while speaker.busy:
+                    speaker.poll()
+                    if audio.stats()['error']:
+                        raise RuntimeError('Audio callback failed')
+                    time.sleep(.005)
+            speaker.poll()
+            speech_stats = speaker.stats()
+            result = {'completed': (not speech_stats['fallback'] and not speech_stats['error']
+                                   and speech_stats['engine'] != 'null' and audio.stats()['callback_errors'] == 0), 'audio_measured': True,
+                      'audio': audio.stats(), 'speech': speaker.stats(), 'trials': []}
+            print(json.dumps(result, indent=2))
+            (root/'summary.json').write_text(json.dumps(result, indent=2)+'\n', encoding='utf-8')
+        finally:
+            speaker.stop()
+            audio.stop()
+    print(f'Speech run saved: {root}')
+    return 0 if result['completed'] else 1
 
 
 if __name__ == "__main__":
