@@ -32,7 +32,7 @@ Keys, scripted trials and voice post `Command` values through the same queue.
 Use `grammar.parse(text, objects, vocabulary, t_mono=now, turn_id=turn,
 source='voice')`; it reads no clock. Ignore `unknown` commands, but log their
 arrival as appropriate. The runner marks a find phrase outside `objects` as
-`untested_noun`. Mouse targets retain the existing empty-phrase click path.
+`untested_noun`. Mouse targets support the legacy empty-phrase path; the integrated runner labels its queued click command and observation as `clicked point`.
 
 The brain owns session states. Perception preserves externally supplied
 HAND_LOST/TARGET_LOST states across result refreshes, and IDLE stops queries.
@@ -40,7 +40,7 @@ Its diagnostics expose `instances_last`, `consecutive_errors`, and
 `last_ok_age_ms` (successful response age, distinct from target/mask age).
 Target-loss timers run from the first absent observation. Target speech is at
 2 s, give-up at 15 s; hand speech is 1.5 s after entering HAND_LOST. Contact can
-fire only in GUIDING. A duplicate find is a recheck, not a new contact session.
+fire only in GUIDING when `contact.enabled` is true. `brain.prediction` carries the CLI prediction setting. A duplicate find is a recheck, not a new contact session.
 
 `ContactRule` uses a 150 ms relative-vector history, a per-side margin of 20%
 with a minimum 12 px, and three qualifying frames. Fresh box-local masks add
@@ -58,7 +58,7 @@ The cache includes text, voice, rate and trim settings, and rejects empty/silent
 synthesis. The default macOS voice may be slow on a cache miss. Mix samples
 through the cue output; cache retrieval is not a measurement of playback start.
 
-The shared `tts` import exposes `SayEngine` for the speech worker. Pre-render
+Import the standalone engine from `reach.say_engine`. The integrated speech worker exposes its `SayEngine` adapter through `reach.tts`. Pre-render
 actual found-position variants including 'back toward you', 'back on your left'
 and 'back on your right', as well as the forward/left/right phrases.
 
