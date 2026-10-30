@@ -20,9 +20,43 @@ uv run pytest
 
 Copy `.env.example` to `.env` and add your own Meta Model API key. Never commit `.env`.
 
-Camera, hand, audio, voice and speech interfaces currently contain simulation
-stubs. They return synthetic observations or retain requests without opening
-hardware or making API calls. They do not provide live guidance yet.
+Capture, hand tracking, stereo guidance, target perception and the overlay are
+implemented. Voice commands, spoken read-back and automatic contact detection
+are still under development. Touch outcomes in timed trials are entered by the
+operator.
+
+Save the [official hand model](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task)
+as `models/hand_landmarker.task`, or set `hand.model_path` in your local config.
+Choose a stereo output with `uv run reach devices`. Use wired headphones and low
+system volume for the direction check.
+
+```sh
+uv run reach run --mount handheld
+uv run reach run --mount handheld --source path/to/clip.mp4 --mute --sam-cache read
+uv run reach earcons
+```
+
+Click a point to guide toward it without API requests. Keys 1–4 choose wallet,
+pen, ball and apple and send images to the configured Meta segmentation API;
+`c` clears, `r` rechecks, `m` toggles sound and `q` quits. File runs use the cache
+automatically; `--sam-cache read` prevents network requests on cache misses.
+
+`--predict 0` disables velocity prediction; `--predict 0.5` enables it. Hand
+inference defaults to two hands. `--hand-width 480 --max-hands 1` is an explicit
+performance fallback for a single reaching hand; it disables two-hand selection.
+The overlay detects an inverted wrist orientation; use `--flip off` or `on`
+after checking cue directions if automatic flipping is unsuitable.
+
+Run `--duration 600` for an endurance recording. Optional `--trials 5
+--trial-mode click` or `phrase` provides timed trials: Space starts once a target
+is ready, `t` records a reported touch, `f` records failure, and `n` prepares the
+next trial. The default time limit is 45 seconds. These keys record operator
+reports; fingertip proximity never counts as a touch automatically.
+
+Each run saves a manifest, events, JPEG frames and a summary under ignored
+`runs/`. `uv run reach report path/to/run` summarizes timing, audio underflows and
+trial paths. `--camera-latency-ms` adds an earlier measured camera median to a
+component estimate; this is not a measured end-to-end latency distribution.
 
 Shared defaults live in `config.yaml`. Put machine-specific camera settings in
 the ignored `config.local.yaml`; nested values override the defaults. Keep API
