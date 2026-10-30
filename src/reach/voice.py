@@ -361,6 +361,90 @@ class VoiceClient:
                 'input_name': self._input_name, 'last_transcript': self._last_transcript,
                 'stereo_ok': self._stereo_ok, 'ptt_active': self._ptt_pending, 'error': self._error}
 
+    def toggle_ptt(self):
+        if self._loop is None or not self._connected or self._loop.is_closed():
+            return False
+        self._loop.call_soon_threadsafe(self._toggle_ptt)
+        return True
+
+    def _toggle_ptt(self):
+        if self._ptt_pending:
+            if not self._ptt_end.is_set():
+                self._ptt_finished = self._clock()
+                self._ptt_end.set()
+            return
+        self._ptt_pending = True
+        self._ptt_started, self._ptt_finished = self._clock(), None
+        self._ptt_queue = asyncio.Queue(maxsize=63)
+        self._ptt_end = asyncio.Event()
+        self._ptt_task = asyncio.create_task(self._ptt_session())
+
+    async def _ptt_session(self):
+        final = None
+        session = None
+        try:
+            async with websockets.connect(self._uri, open_timeout=10, max_size=2**20, close_timeout=3) as ws:
+                session = await self._ack(ws, 'PUSH_TO_TALK')
+
+                async def send():
+                    while not self._ptt_end.is_set() or not self._ptt_queue.empty():
+                        if self._clock()-self._ptt_started > 60:
+                            self._ptt_finished = self._clock()
+                            self._ptt_end.set()
+                        try:
+                            pcm = await asyncio.wait_for(self._ptt_queue.get(), .05)
+                        except TimeoutError:
+                            continue
+                        await ws.send(pcm)
+                    await ws.send(json.dumps({'type': 'endStream'}))
+
+                async def receive():
+                    nonlocal final
+                    async for raw in ws:
+                        if not isinstance(raw, str):
+                            continue
+                        event = json.loads(raw)
+                        if event.get('type') == 'error':
+                            raise ValueError('PTT server error')
+                        if event.get('type') == 'transcript':
+                            text = event.get('transcript', '')
+                            if isinstance(text, str):
+                                self._last_transcript = text
+                            if event.get('final') is True and isinstance(text, str):
+                                final = event
+                                now = self._clock()
+                                latency = (now-self._ptt_finished)*1000 if self._ptt_finished is not None else None
+                                if latency is not None:
+                                    self._ptt_latency.append(latency)
+                                self._emit('voice_turn', {'session_id': session, 'turn_id': event.get('turnId'),
+                                    'transcript': text, 't_speech_start': self._ptt_started,
+                                    't_speech_end': self._ptt_finished, 't_complete': now,
+                                    'audio_processed_ms': event.get('audioProcessedMs'), 'latency_ms': latency,
+                                    'latency_source': 'second_tap_to_final', 'mode': 'PUSH_TO_TALK', 'ignored': False})
+                                self._post(self._parse(text, event.get('turnId'), 'ptt'))
+                sender, receiver = asyncio.create_task(send()), asyncio.create_task(receive())
+                try:
+                    done, _ = await asyncio.wait((sender, receiver), return_when=asyncio.FIRST_COMPLETED)
+                    if sender in done:
+                        sender.result()
+                        await asyncio.wait_for(asyncio.shield(receiver), 10)
+                    else:
+                        receiver.result()
+                    if final is None:
+                        raise ValueError('PTT closed without a final result')
+                finally:
+                    for task in (sender, receiver):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(sender, receiver, return_exceptions=True)
+                    self._session_event('close', 'PUSH_TO_TALK', session_id=session, code=ws.close_code)
+        except Exception as exc:
+            self._session_event('error', 'PUSH_TO_TALK', session_id=session,
+                                reason=f'push-to-talk failed ({type(exc).__name__})')
+        finally:
+            self._ptt_pending = False
+            self._ptt_queue = self._ptt_end = None
+
     def stop(self):
         self._closed.set()
         if self._loop and self._stop_event and not self._loop.is_closed():

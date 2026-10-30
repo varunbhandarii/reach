@@ -89,3 +89,47 @@ def test_frame_queue_drops_oldest_and_backoff_bounds():
     asyncio.run(scenario())
     assert [reconnect_delay(1013, i) for i in range(5)] == [2, 4, 8, 8, 8]
     assert [reconnect_delay(1006, i) for i in range(6)] == [.5, 1, 2, 4, 8, 8]
+
+
+def test_push_to_talk_buffers_before_ack_and_silences_endpointing():
+    async def scenario():
+        commands, normal_packets, ptt_packets = [], [], []
+        ptt_seen = asyncio.Event()
+        async def noisy_source():
+            while True:
+                yield b'\x01\x00'*1920
+                await asyncio.sleep(.01)
+        async def handler(ws):
+            handshake = json.loads(await ws.recv())
+            ptt = handshake['mode'] == 'PUSH_TO_TALK'
+            if ptt:
+                ptt_seen.set()
+                await asyncio.sleep(.1)
+            await ws.send(json.dumps({'sessionId': 'ptt' if ptt else 'normal'}))
+            async for message in ws:
+                if isinstance(message, bytes):
+                    (ptt_packets if ptt else normal_packets).append(message)
+                elif json.loads(message).get('type') == 'endStream':
+                    if ptt:
+                        await ws.send(json.dumps({'type': 'transcript', 'final': True, 'transcript': 'find the wallet'}))
+                    await ws.close(code=1000)
+                    return
+        async with serve(handler, '127.0.0.1', 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            client = VoiceClient({}, None, commands.append, parser=parse, audio_source=noisy_source(),
+                                 uri=f'ws://127.0.0.1:{port}', api_key='synthetic')
+            client.start()
+            try:
+                await until(lambda: client.stats()['connected'])
+                assert client.toggle_ptt()
+                await ptt_seen.wait()
+                await asyncio.sleep(.15)
+                assert client.toggle_ptt()
+                await until(lambda: len(commands) == 1)
+                assert commands[0].kind == 'find'
+                assert len(ptt_packets) >= 5 and all(any(p) for p in ptt_packets)
+                assert any(not any(p) for p in normal_packets)
+                assert client.stats()['ptt_p50_ms'] is not None
+            finally:
+                await asyncio.to_thread(client.stop)
+    asyncio.run(scenario())
