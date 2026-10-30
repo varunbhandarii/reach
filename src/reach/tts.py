@@ -37,6 +37,8 @@ class SilentSpeaker:
         pass
     def start(self):
         pass
+    def wait_ready(self, timeout=120):
+        return True
     def say(self, text, key=None, priority=0):
         self.last_text = text
     def cancel(self, **kwargs):
@@ -128,6 +130,7 @@ class Speaker:
         self.cfg, self.audio, self.log = cfg.get('tts', {}), audio, log
         self._factory, self._clock = engine_factory, clock
         self._condition = threading.Condition()
+        self._ready = threading.Event()
         self._stop = False
         self._thread = None
         self._current = None
@@ -153,6 +156,15 @@ class Speaker:
                 return
             self._thread = threading.Thread(target=self._run, name='speech', daemon=True)
             self._thread.start()
+
+    def wait_ready(self, timeout=120):
+        """Finish startup synthesis before the microphone or trial timer opens."""
+        self.start()
+        if not self._ready.wait(timeout):
+            raise RuntimeError('Speech cache did not finish before its startup deadline')
+        if self._error and not self._fallback:
+            raise RuntimeError(self._error)
+        return True
 
     @property
     def busy(self):
@@ -253,6 +265,7 @@ class Speaker:
                     elif self._preload:
                         text, job = self._preload.popleft(), None
                     else:
+                        self._ready.set()
                         self._condition.wait(.02)
                         continue
                 rate = self.audio.sample_rate
@@ -283,6 +296,7 @@ class Speaker:
             except Exception:
                 pass
         finally:
+            self._ready.set()
             if engine:
                 engine.close()
 
@@ -293,7 +307,7 @@ class Speaker:
             return {'busy': current is not None or bool(self._waiting), 'text': current.text if current else None,
                     'caption': self.last_text,
                     'priority': current.priority if current else None, 'engine': self._engine_name,
-                    'cached_phrases': len(self._cache), 'fallback': self._fallback, 'error': self._error,
+                    'cache_ready': self._ready.is_set(), 'cached_phrases': len(self._cache), 'fallback': self._fallback, 'error': self._error,
                     'first_audio_p50_ms': float(np.median(latencies)) if latencies else None,
                     'first_audio_p95_ms': float(np.percentile(latencies, 95)) if latencies else None}
 

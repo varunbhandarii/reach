@@ -323,6 +323,8 @@ class Runner:
             if not self.args.mute:
                 self.audio.start()
                 self.speaker.start()
+                print('Preparing local speech; wait for the camera window before speaking.', flush=True)
+                self.speaker.wait_ready()
             self.perception.start()
             if self.voice:
                 self.voice.start()
