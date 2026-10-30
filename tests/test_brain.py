@@ -135,3 +135,24 @@ def test_contact_speech_completion_and_passive_commands():
     assert d.state=='DONE' and any(x.kind=='set_phrase' and x.text is None for x in e)
     b=Brain();d,e=step(b,0,[cmd('yes'),cmd('no'),cmd('choose','left'),cmd('unknown')])
     assert d.state=='IDLE' and e==[]
+
+
+def test_disabled_contact_keeps_guiding_without_chimes():
+    b=Brain({'contact': {'enabled': False}})
+    step(b,0,[cmd('find','wallet')])
+    for i in range(1,20):
+        d,e=step(b,i*.05,hand=h(i,point=(150,150)),target=t())
+        assert d.state=='GUIDING' and d.cue is not None
+        assert 'contact' not in keys(e,'earcon')
+
+
+def test_prediction_setting_from_session_config_is_used():
+    from dataclasses import replace
+    moving=replace(h(),velocity_px_s=(100,0))
+    results=[]
+    for prediction in (0,.5):
+        b=Brain({'brain': {'prediction': prediction}})
+        step(b,0,[cmd('find','wallet')])
+        results.append(step(b,.1,hand=moving,target=t())[0])
+    assert results[0].dx == pytest.approx((150-40)/640)
+    assert results[1].dx < results[0].dx

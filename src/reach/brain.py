@@ -8,7 +8,7 @@ Effects use the existing log type/data envelope and perform no I/O here.
 
 from dataclasses import asdict
 import math
-from .contact import ContactRule
+from .contact import ContactRule, ContactState
 from .controller import target_center, predict_tip, map_vector
 from .types import Decision, Effect
 
@@ -192,7 +192,8 @@ class Brain:
 
         cue=None
         if self.state=='GUIDING' and target_ok and hand_ok:
-            contact=self.contact.update(now,hand,target)
+            contact=(self.contact.update(now,hand,target) if self.cfg.get('contact',{}).get('enabled',True)
+                     else ContactState())
             self.contact_state=contact
             if contact != self._last_contact:
                 effects.append(Effect('log',key='contact',payload={'event':'fire' if contact.fired else 'change',
@@ -203,7 +204,7 @@ class Brain:
                 effects.append(Effect('earcon',key='contact'))
                 self._speak(effects,f"You're touching {self._name()}.",'contact',2)
             else:
-                point=predict_tip(hand.fingertip_px,hand.velocity_px_s,center,float(self.cfg.get('prediction',.5)))
+                point=predict_tip(hand.fingertip_px,hand.velocity_px_s,center,float(self.params.get('prediction',self.cfg.get('prediction',.5))))
                 dx,dy,distance,cue=map_vector(point,center,*frame_size,flipped=flipped,gain=float(self.cfg.get('audio',{}).get('gain',.2)))
                 return self._decision(now,hand,target,cue,effects,(dx,dy,distance))
         else:
