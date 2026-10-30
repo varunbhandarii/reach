@@ -107,7 +107,8 @@ def phrase_texts(objects):
             f"I couldn't find the {obj}.", f'Lost the {obj}. Hold the phone still.', f'I lost the {obj}.',
             f"You're touching the {obj}."])
         texts.extend(f'Found the {obj}, {where}.' for where in
-            ('to your left', 'to your right', 'straight ahead', 'ahead on your left', 'ahead on your right'))
+            ('to your left', 'to your right', 'straight ahead', 'ahead on your left', 'ahead on your right',
+             'back toward you', 'back on your left', 'back on your right'))
         texts.extend(f'Trial {i}. Find the {obj}.' for i in range(1, 6))
     return list(dict.fromkeys(texts))
 

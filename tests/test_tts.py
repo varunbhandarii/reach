@@ -99,3 +99,11 @@ def test_sapi_memory_synthesis_and_trim():
         assert np.max(np.abs(trimmed)) > .01 and .05*48000 < len(trimmed) <= len(samples)
     finally:
         sapi.close()
+
+
+def test_found_phrase_cache_includes_every_direction():
+    from reach.tts import phrase_texts
+    texts=phrase_texts(['wallet'])
+    for where in ('to your left','to your right','straight ahead','ahead on your left',
+                  'ahead on your right','back toward you','back on your left','back on your right'):
+        assert f'Found the wallet, {where}.' in texts

@@ -160,10 +160,12 @@ class VoiceClient:
                 self._stream.start()
                 if self._output_probe:
                     output = self._output_probe()
-                    self._stereo_ok = output['max_output_channels'] >= 2 and output['default_samplerate'] >= 44100
+                    from .speech_devices import stereo_warning
+                    warning = stereo_warning(output, input_name=self._input_name)
+                    self._stereo_ok = warning is None
                     if not self._stereo_ok:
-                        self._session_event('error', reason='Stereo output unavailable after microphone opened')
-                        print('STEREO UNAVAILABLE: guidance is muted. Check input/output routing.', file=sys.stderr, flush=True)
+                        self._session_event('error', reason=warning)
+                        print(f'STEREO UNAVAILABLE: guidance is muted. {warning}', file=sys.stderr, flush=True)
             attempts = 0
             while not self._stop_event.is_set():
                 code = None

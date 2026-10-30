@@ -136,3 +136,31 @@ def test_push_to_talk_buffers_before_ack_and_silences_endpointing():
             finally:
                 await asyncio.to_thread(client.stop)
     asyncio.run(scenario())
+
+
+def test_airpods_input_is_warned_even_when_metadata_reports_stereo(monkeypatch):
+    import pytest
+    pytest.importorskip('reach.speech_devices',reason='Shared device checks not integrated yet')
+    events=[]
+    client=None
+    class Stream:
+        def __init__(self,**kwargs): pass
+        def start(self): client._stop_event.set()
+        def stop(self): pass
+        def close(self): pass
+    monkeypatch.setattr('reach.voice.select_input',lambda cfg: (0,'Core Audio',{'name':'AirPods Pro'}))
+    client=VoiceClient({},NS(emit=lambda kind,data: events.append((kind,data))),lambda c: None,
+        stream_factory=Stream,api_key='synthetic',output_probe=lambda: {
+            'name':'AirPods Pro','max_output_channels':2,'default_samplerate':48000})
+    asyncio.run(client._run())
+    assert not client.stats()['stereo_ok']
+    assert any('AirPods microphone' in data.get('reason','') for _,data in events)
+
+
+def test_real_grammar_preserves_command_provenance():
+    import pytest
+    pytest.importorskip('reach.grammar',reason='Shared grammar not integrated yet')
+    client=VoiceClient({'objects':['wallet','pen','ball','apple']},None,lambda c: None,
+                       clock=lambda: 12.5)
+    command=client._parse('Where is my wallet?',7,'voice')
+    assert (command.kind,command.phrase,command.turn_id,command.t_mono,command.source)==('find','wallet',7,12.5,'voice')
