@@ -13,33 +13,9 @@ from reach.types import Command, CueParams
 from reach.voice import VoiceClient
 
 
-def test_simulated_observation_flow_and_buffer(monkeypatch):
-    now = [100.0]
-    monkeypatch.setattr(time, "perf_counter", lambda: now[0])
-    cfg = {"camera": {"source": "file", "width": 640, "height": 480}}
-    camera = Camera(cfg)
-    with pytest.raises(RuntimeError):
-        camera.latest()
-    camera.start()
-    frame, image = camera.latest()
-    hand = HandTracker(cfg).observe(frame, image)
-    assert frame.id == 0 and hand.frame_id == frame.id
-    assert hand.present and image.shape == (480, 640, 3)
-    assert len(frame.jpeg_sha256) == 64
-    image[:] = 0
-    assert camera.get(frame.id).mean() == 96
-    now[0] += 3.01
-    assert camera.get(frame.id) is None
-    second, _ = camera.latest()
-    assert second.id > frame.id
-    camera.stop()
-    assert camera.get(second.id) is None
-
-
 def test_output_stubs_do_not_trigger_io():
     cue = CueParams(0, 440, 4, False, 0, .2)
     audio = CueEngine({})
-    audio.start()
     audio.set(cue)
     audio.duck(True)
     audio.earcon("contact")

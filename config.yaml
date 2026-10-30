@@ -5,6 +5,21 @@ camera:
   backend: auto
   width: 640
   height: 480
+  ring_depth: 90
+  pin_landscape: false
+runtime:
+  opencv_threads: 1
+hand:
+  max_hands: 2
+  model_path: models/hand_landmarker.task
+  confidence: 0.5
+  dominant: Right
+  hold_ms: 300
+  label_vote_frames: 15
+  switch_frames: 10
+  min_cutoff: 1.0
+  beta: 0.01
+  derivative_cutoff: 1.0
 sam:
   model: sam-3.1
   conf_min: 0.5
@@ -20,6 +35,7 @@ motion:
   width: 640
   history: 90
   min_inliers: 15
+  appearance_guard: true
 voice:
   model: muse-voice-transcribe-1.0
   mode: ENDPOINTING
