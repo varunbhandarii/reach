@@ -57,13 +57,30 @@ class Perception:
 
     def stop(self):
         self._stop.set()
-        self._target = None
+        with self._lock:
+            self._generation += 1
+            self._state = "STOPPED"
+            self._target = None
         if self._thread:
             self._thread.join(timeout=4)
         if self._worker_thread:
             self._worker_thread.join(timeout=4)
         if (self._thread and self._thread.is_alive()) or (self._worker_thread and self._worker_thread.is_alive()):
             raise RuntimeError("perception worker did not stop within its deadline")
+        with self._lock:
+            # The worker may finish after the frame loop exits. Preserve its
+            # terminal response before the runner closes the event log.
+            self._drain_results()
+            if self._inflight is not None:
+                job = self._inflight
+                self._emit("sam_cancel", {"req_id": job["id"], "frame_id": job["frame"].id,
+                    "reason": "shutdown_before_send"})
+                self._inflight = None
+            while True:
+                try:
+                    self._jobs.get_nowait()
+                except queue.Empty:
+                    break
 
     def set_phrase(self, phrase: str | None):
         phrase = phrase.strip() if phrase else None
@@ -201,7 +218,8 @@ class Perception:
                 self._metrics["responses_dropped"] += 1
             self._emit("sam_resp", {"req_id": job["id"], "frame_id": job["frame"].id,
                 "status": status, "latency_ms": latency, "instances": [asdict(i) for i in instances],
-                "error": error.kind if error else None})
+                "error": error.kind if error else None,
+                "reason": "shutdown" if self._stop.is_set() else None})
             if error or invalid:
                 continue
             previous = self.tracker.current()

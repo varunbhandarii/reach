@@ -139,3 +139,54 @@ def test_real_worker_never_overlaps_calls_and_stops():
         p._stop.set()
         worker.join(2)
     assert not worker.is_alive()
+
+
+class CapturedLog:
+    def __init__(self):
+        self.events = []
+    def emit(self, kind, data):
+        self.events.append((kind, data))
+
+
+def test_stop_records_inflight_response_before_log_close():
+    c, log = Camera(), CapturedLog()
+    entered, release = threading.Event(), threading.Event()
+    def segment(*args):
+        entered.set()
+        assert release.wait(2)
+        return (Instance('1', (100, 200, 150, 250), .9, None),)
+    p = Perception({}, c, log, segmenter=segment)
+    p.set_phrase('wallet')
+    p.process(c.frame(0), c.image)
+    p._worker_thread = threading.Thread(target=p._sam_worker)
+    p._worker_thread.start()
+    assert entered.wait(2)
+    timer = threading.Timer(.02, release.set)
+    timer.start()
+    try:
+        p.stop()
+    finally:
+        release.set()
+        timer.join()
+        p._worker_thread.join(2)
+    requests = [data for kind, data in log.events if kind == 'sam_req']
+    responses = [data for kind, data in log.events if kind == 'sam_resp']
+    assert len(requests) == len(responses) == 1
+    assert responses[0]['req_id'] == requests[0]['req_id']
+    assert responses[0]['status'] == 'dropped' and responses[0]['reason'] == 'shutdown'
+    assert p.latest() is None
+    assert not p.stats()['in_flight'] and p.stats()['state'] == 'STOPPED'
+    p.stop()
+    assert len([e for e in log.events if e[0] == 'sam_resp']) == 1
+
+
+def test_stop_cancels_queued_work_without_claiming_an_api_request():
+    c, log = Camera(), CapturedLog()
+    p = Perception({}, c, log)
+    p.set_phrase('wallet')
+    p.process(c.frame(0), c.image)
+    p.stop()
+    assert p.stats()['images_sent'] == 0
+    assert not p.stats()['in_flight'] and p._jobs.empty()
+    assert [kind for kind, _ in log.events if kind in ('sam_req', 'sam_resp')] == []
+    assert [data['reason'] for kind, data in log.events if kind == 'sam_cancel'] == ['shutdown_before_send']
