@@ -102,3 +102,11 @@ and dimensions. Run folders can contain sensitive images; keep them local.
 
 The camera, hand, audio and command interfaces still use simulation stubs on
 this branch. A real capture source and runner are required for live guidance.
+
+Late segmentation results also receive a conservative appearance check using
+`camera.get(frame_id)` and the stored source mask. A large color disagreement
+in a clear target region clears guidance and requests a fresh frame. Visible
+hand occlusion exempts this check. `motion.appearance_guard` controls it; the
+check detects gross changes and does not establish object identity. Repeated
+selection of the same phrase refreshes the search without discarding a pending
+result or a current lock.

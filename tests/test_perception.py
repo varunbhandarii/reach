@@ -190,3 +190,34 @@ def test_stop_cancels_queued_work_without_claiming_an_api_request():
     assert not p.stats()['in_flight'] and p._jobs.empty()
     assert [kind for kind, _ in log.events if kind in ('sam_req', 'sam_resp')] == []
     assert [data['reason'] for kind, data in log.events if kind == 'sam_cancel'] == ['shutdown_before_send']
+
+
+def test_repeated_object_selection_preserves_pending_result():
+    c = Camera()
+    p = Perception({}, c, None)
+    p.set_phrase('wallet')
+    p.process(c.frame(0), c.image)
+    job = p._jobs.get_nowait()
+    generation = p._generation
+    p.set_phrase('wallet')
+    assert p._generation == generation
+    p._results.put((job, (Instance('1', (100, 200, 150, 250), .9, None),), None, 100))
+    p.process(c.frame(1), c.image)
+    assert p.latest() is not None and p.stats()['responses_dropped'] == 0
+
+
+def test_late_result_with_changed_appearance_stays_silent(monkeypatch):
+    c = Camera()
+    c.get = lambda frame_id: c.image.copy()
+    log = CapturedLog()
+    p = Perception({}, c, log)
+    p.set_phrase('ball')
+    p.process(c.frame(0), c.image)
+    job = p._jobs.get_nowait()
+    monkeypatch.setattr('reach.perception.compare_appearance', lambda *a: {'hs': .9, 'hsv': .95})
+    p._results.put((job, (Instance('1', (100, 200, 150, 250), .9, None),), None, 100))
+    p.process(c.frame(1), c.image)
+    assert p.latest() is None
+    assert p.stats()['appearance_rejections'] == 1
+    assert any(kind == 'target_reject' for kind, data in log.events)
+    assert p._req_id == 2  # Fresh frame requested, rather than applying the changed patch.
