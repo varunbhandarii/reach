@@ -9,6 +9,7 @@ import time
 
 import cv2
 
+from .appearance import compare_appearance, appearance_changed
 from .sam_client import SamClient, SamError, SamRateLimited
 from .sam_cache import SamCache, CacheMiss
 from .scheduler import QueryScheduler
@@ -20,7 +21,8 @@ class Perception:
     """Start after Camera.open/start; stop before closing the run log.
 
     Camera supplies wait_newer(last_id, timeout), returning (Frame, BGR image)
-    or None, and get_jpeg(frame_id). No camera is opened by this component.
+    or None, get_jpeg(frame_id), and get(frame_id) for source-image appearance
+    checks. No camera is opened by this component.
     """
 
     def __init__(self, cfg, camera, log, *, segmenter=None, clock=time.perf_counter):
@@ -44,7 +46,7 @@ class Perception:
         self._req_id = 0
         self._seed_time = None
         self._ambiguous = False
-        self._metrics = {"images_sent": 0, "responses_dropped": 0, "errors": 0, "cache_hits": 0}
+        self._metrics = {"images_sent": 0, "responses_dropped": 0, "errors": 0, "cache_hits": 0, "appearance_rejections": 0}
         self._fatal = None
 
     def start(self):
@@ -87,6 +89,10 @@ class Perception:
         if phrase and (len(phrase) > 120 or any(c in phrase for c in '\n,;')):
             raise ValueError("choose one short noun phrase")
         with self._lock:
+            if (phrase and self._mode == "phrase" and phrase == self._phrase
+                    and self._state not in ("IDLE", "STOPPED") and not self._fatal):
+                self.scheduler.force()
+                return
             self._generation += 1
             self._mode, self._phrase, self._point = ("phrase" if phrase else None), phrase, None
             self._target = None
@@ -237,7 +243,21 @@ class Perception:
             self._ambiguous = len(ranked) > 1 and confidence(ranked[0])-confidence(ranked[1]) <= tie
             if previous is not None:
                 ranked.sort(key=lambda pair: box_iou(previous.box_xyxy, pair[1].box_xyxy), reverse=True)
-            selected = ranked[0][0]
+            selected, mapped = ranked[0]
+            motion_cfg = self.cfg.get("motion", {})
+            get_image = getattr(self.camera, "get", None)
+            source_image = get_image(job["frame"].id) if callable(get_image) else None
+            if motion_cfg.get("appearance_guard", True) and source_image is not None:
+                distances = compare_appearance(source_image, instances[selected], self.tracker.image, mapped, self._hand)
+                if appearance_changed(distances):
+                    self._metrics["appearance_rejections"] += 1
+                    self.tracker.clear()
+                    self._target = None
+                    self._state = "SEARCHING"
+                    self.scheduler.force()
+                    self._emit("target_reject", {"req_id": job["id"], "frame_id": self.tracker.frame.id,
+                        "source_frame_id": job["frame"].id, "reason": "appearance_changed", **distances})
+                    continue
             if self.tracker.reseed(job["frame"].id, instances[selected]):
                 self._last_applied = job["frame"].id
                 self._seed_time = job["frame"].t_mono
