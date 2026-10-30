@@ -1,6 +1,9 @@
 from types import SimpleNamespace as NS
+from dataclasses import asdict
+import json
 
 import numpy as np
+import pytest
 
 from reach.hand import HandSelector, HandTracker, OneEuro, forearm_hull
 from reach.types import Frame
@@ -77,3 +80,48 @@ def test_observe_timestamps_duplicates_hold_and_loss():
     import json
     assert type(tracker.upside_down) is bool
     json.dumps(tracker.stats(), allow_nan=False)
+
+
+@pytest.mark.parametrize('tip', [(40, 40), (150, 150)])
+def test_contact_events_serialize_on_initial_and_reacquired_hand(tip):
+    from reach.brain import Brain
+    from reach.types import Command, Instance, TargetObs
+    landmarks = points().copy()
+    landmarks[8] = tip
+    normalized = landmarks/np.array([640, 480])
+    detected = NS(hand_landmarks=[[NS(x=x, y=y) for x,y in normalized]],
+                  handedness=[[NS(category_name='Right', score=.99)]])
+    returned = normalized.copy()
+    returned[8] = np.asarray((150, 150) if tip == (40, 40) else (40, 40))/[640, 480]
+    reacquired = NS(hand_landmarks=[[NS(x=x, y=y) for x,y in returned]],
+                    handedness=detected.handedness)
+    absent = NS(hand_landmarks=[], handedness=[])
+    class Detector:
+        calls = 0
+        def detect_for_video(self, image, stamp):
+            self.calls += 1
+            return absent if self.calls == 2 else reacquired if self.calls == 3 else detected
+    tracker = HandTracker({'hand': {'switch_frames': 1}}, detector=Detector())
+    brain = Brain()
+    target = TargetObs(0, 'pen', (Instance('1', (100, 100, 200, 200), 1, None),),
+                       0, 'tracker', 0)
+    image = np.zeros((480, 640, 3), np.uint8)
+    contact_events = []
+    try:
+        for i,stamp in enumerate((1, 1.4, 1.5)):
+            hand = tracker.observe(Frame(i, stamp, 0, 640, 480, 'synthetic', 'file'), image)
+            assert hand.present is (i != 1)
+            commands = [Command('find', 'pen', 'synthetic', None, stamp)] if i == 0 else []
+            decision, effects = brain.step(stamp, hand=hand, target=target, commands=commands)
+            json.dumps(asdict(decision), allow_nan=False)
+            for effect in effects:
+                if effect.kind == 'log':
+                    json.dumps(effect.payload, allow_nan=False)
+                    if effect.key == 'contact':
+                        contact_events.append(effect.payload)
+            if hand.present:
+                assert all(type(value) is float for value in hand.fingertip_px)
+        assert len(contact_events) == 2
+        assert all(not event['fired'] for event in contact_events)
+    finally:
+        tracker.close()
