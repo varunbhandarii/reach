@@ -29,6 +29,26 @@ class NullEngine:
         pass
 
 
+class SilentSpeaker:
+    """Captions without opening a synthesis engine or output device."""
+    busy = False
+    last_text = None
+    def __init__(self, *args, **kwargs):
+        pass
+    def start(self):
+        pass
+    def say(self, text, key=None, priority=0):
+        self.last_text = text
+    def cancel(self, **kwargs):
+        self.last_text = None
+    def poll(self):
+        pass
+    def stats(self):
+        return {'busy': False, 'text': self.last_text, 'priority': None, 'engine': 'disabled', 'error': None}
+    def stop(self):
+        pass
+
+
 class SapiEngine:
     name = 'sapi'
     def __init__(self, cfg=None):
@@ -156,12 +176,14 @@ class Speaker:
                 old = self._current
                 self.audio.cancel_speech()
                 self._emit('cancel', old, reason='replaced')
+                self._requests.pop(old.ident, None)
                 self._current = job
             else:
                 if len(self._waiting) >= 2:
                     oldest_info = next((j for j in self._waiting if j.priority == 0), self._waiting[0])
                     self._waiting.remove(oldest_info)
                     self._emit('drop', oldest_info, reason='waiting queue full')
+                    self._requests.pop(oldest_info.ident, None)
                 self._waiting.append(job)
             self._condition.notify_all()
             return job.ident
@@ -171,6 +193,7 @@ class Speaker:
             if self._current and (not info_only or self._current.priority == 0):
                 self.audio.cancel_speech()
                 self._emit('cancel', self._current, reason='barge in' if info_only else 'cancelled')
+                self._requests.pop(self._current.ident, None)
                 self._current = None
             retained = deque()
             for job in self._waiting:
@@ -178,6 +201,7 @@ class Speaker:
                     retained.append(job)
                 else:
                     self._emit('drop', job, reason='cancelled')
+                    self._requests.pop(job.ident, None)
             self._waiting = retained
             if self._current is None and self._waiting:
                 self._current = self._waiting.popleft()
@@ -266,6 +290,7 @@ class Speaker:
             current = self._current
             latencies = tuple(self._latencies)
             return {'busy': current is not None or bool(self._waiting), 'text': current.text if current else None,
+                    'caption': self.last_text,
                     'priority': current.priority if current else None, 'engine': self._engine_name,
                     'cached_phrases': len(self._cache), 'fallback': self._fallback, 'error': self._error,
                     'first_audio_p50_ms': float(np.median(latencies)) if latencies else None,

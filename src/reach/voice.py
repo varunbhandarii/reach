@@ -4,10 +4,8 @@ import asyncio
 from collections import deque
 from dataclasses import replace
 import json
-import math
 import os
 from pathlib import Path
-import re
 import sys
 import threading
 import time
@@ -165,6 +163,7 @@ class VoiceClient:
                     self._stereo_ok = output['max_output_channels'] >= 2 and output['default_samplerate'] >= 44100
                     if not self._stereo_ok:
                         self._session_event('error', reason='Stereo output unavailable after microphone opened')
+                        print('STEREO UNAVAILABLE: guidance is muted. Check input/output routing.', file=sys.stderr, flush=True)
             attempts = 0
             while not self._stop_event.is_set():
                 code = None
@@ -198,7 +197,7 @@ class VoiceClient:
             if self._ptt_task:
                 try:
                     await asyncio.wait_for(asyncio.shield(self._ptt_task), 6)
-                except (TimeoutError, Exception):
+                except Exception:
                     self._ptt_task.cancel()
                     await asyncio.gather(self._ptt_task, return_exceptions=True)
             if feed:
@@ -209,16 +208,20 @@ class VoiceClient:
                 self._stream.close()
             self._key = None
 
-    def _handshake(self, mode):
+    def _keywords(self):
         path = Path(self.cfg.get('keywords_file', 'config/keywords.txt'))
         if not path.is_absolute():
             path = PROJECT_ROOT/path
         words = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+        words += self.cfg.get('vocabulary', [])
         words += self.root_cfg.get('objects', ['wallet', 'pen', 'ball', 'apple'])
+        return list(dict.fromkeys(w.strip() for w in words if isinstance(w, str) and w.strip()))
+
+    def _handshake(self, mode):
         return {'authorization': {'accessToken': 'Bearer '+self._key}, 'audioEncoding': 'PCM_24KHZ',
                 'model': self.cfg.get('model', 'muse-voice-transcribe-1.0'), 'mode': mode,
                 'partialMode': 'CUMULATIVE', 'emitAudioProgress': True,
-                'languageBias': ['English'], 'keywords': list(dict.fromkeys(w.strip() for w in words if w.strip()))}
+                'languageBias': ['English'], 'keywords': self._keywords()}
 
     async def _ack(self, ws, mode):
         self._session_event('open', mode)
@@ -236,7 +239,7 @@ class VoiceClient:
             parser = parse
         else:
             parser = self._parser
-        command = parser(text, self.root_cfg.get('objects', ['wallet', 'pen', 'ball', 'apple']), self.cfg.get('vocabulary', []))
+        command = parser(text, self.root_cfg.get('objects', ['wallet', 'pen', 'ball', 'apple']), self._keywords())
         fields = {'t_mono': self._clock(), 'turn_id': turn_id}
         if 'source' in Command.__dataclass_fields__:
             fields['source'] = source
@@ -276,23 +279,25 @@ class VoiceClient:
                         active_id = tid
                         self._active_turns.add(tid)
                         ignore = self._ptt_pending or (self.cfg.get('ignore_during_speech', False) and self._speaking())
-                        turns[tid] = {'start': now, 'end': None, 'ignore': ignore}
+                        turns[tid] = {'start': now, 'end': None, 'ignore': ignore,
+                                      'start_audio_ms': event.get('audioProcessedMs')}
                         if not ignore and self.cfg.get('barge_in', True) and self._on_speech_start:
                             self._on_speech_start()
                     elif kind == 'speechEnd':
-                        turns.setdefault(tid, {'start': None, 'ignore': self._ptt_pending})['end'] = now
+                        info = turns.setdefault(tid, {'start': None, 'ignore': self._ptt_pending})
+                        info.update(end=now, end_audio_ms=event.get('audioProcessedMs'))
                     elif kind == 'transcript':
                         text = event.get('transcript', '')
                         if not isinstance(text, str):
                             continue
                         self._last_transcript = text
                         normalized = text.strip().lower().strip('.!?')
-                        info = turns.get(active_id, {})
-                        token = active_id
+                        token = tid if tid is not None else active_id
+                        info = turns.get(token, {})
                         if (self.cfg.get('fast_stop', True) and normalized in ('stop', 'cancel')
                                 and not info.get('ignore', self._ptt_pending)
                                 and (token not in fast or now-fast[token][1] > 3)):
-                            command = Command(normalized, None, text, active_id, now)
+                            command = Command(normalized, None, text, token, now)
                             if 'source' in Command.__dataclass_fields__:
                                 command = replace(command, source='voice_fast')
                             self._post(command)
@@ -305,12 +310,14 @@ class VoiceClient:
                         self._active_turns.discard(tid)
                         info = turns.pop(tid, {'start': None, 'end': None, 'ignore': self._ptt_pending})
                         latency = (now-info['end'])*1000 if info.get('end') is not None else None
-                        if latency is not None:
+                        if latency is not None and not info['ignore']:
                             self._latencies.append(latency)
                         self._turns += 1
                         self._emit('voice_turn', {'session_id': session, 'turn_id': tid, 'transcript': text,
                             't_speech_start': info.get('start'), 't_speech_end': info.get('end'), 't_complete': now,
-                            'audio_processed_ms': event.get('audioProcessedMs'), 'latency_ms': latency,
+                            'audio_processed_ms': event.get('audioProcessedMs', info.get('end_audio_ms')),
+                            'speech_start_audio_processed_ms': info.get('start_audio_ms'),
+                            'speech_end_audio_processed_ms': info.get('end_audio_ms'), 'latency_ms': latency,
                             'latency_source': 'server_event_receipt', 'mode': 'ENDPOINTING', 'ignored': bool(info['ignore'])})
                         match = fast.pop(tid, fast.pop(None, None))
                         command = self._parse(text, tid, 'voice') if not info['ignore'] else None

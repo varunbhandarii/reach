@@ -42,10 +42,10 @@ def test_fake_server_fast_stop_reconnect_and_final_drain():
                 await ws.close(code=1011 if number == 1 else 1013)
                 return
             for event in [
-                {'type': 'speechStart', 'turnId': 1},
+                {'type': 'speechStart', 'turnId': 1, 'audioProcessedMs': 80},
                 {'type': 'transcript', 'transcript': 'stop'},
                 {'type': 'transcript', 'transcript': 'stop'},
-                {'type': 'speechEnd', 'turnId': 1},
+                {'type': 'speechEnd', 'turnId': 1, 'audioProcessedMs': 240},
                 {'type': 'speechComplete', 'turnId': 1, 'transcript': 'stop'},
                 {'type': 'futureEvent'},
                 {'type': 'transcript', 'transcript': "don't stop"},
@@ -74,6 +74,9 @@ def test_fake_server_fast_stop_reconnect_and_final_drain():
             assert delays == [0, 2]
             assert all(h['authorization']['accessToken'] == 'Bearer synthetic' for h in acknowledgements)
             assert all(h['audioEncoding'] == 'PCM_24KHZ' for h in acknowledgements)
+            turn = next(d for k,d in events if k == 'voice_turn' and d['turn_id'] == 1)
+            assert turn['speech_start_audio_processed_ms'] == 80
+            assert turn['speech_end_audio_processed_ms'] == turn['audio_processed_ms'] == 240
     asyncio.run(scenario())
 
 

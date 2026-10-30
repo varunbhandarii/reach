@@ -39,7 +39,16 @@ motion:
 voice:
   model: muse-voice-transcribe-1.0
   mode: ENDPOINTING
-  encoding: PCM_16KHZ
+  encoding: PCM_24KHZ
+  rate: 24000
+  frame_ms: 80
+  queue_frames: 2
+  input_device: null
+  fast_stop: true
+  rotate_min: 55
+  backoff_s: [0.5, 1, 2, 4, 8]
+  barge_in: true
+  ignore_during_speech: false
   language_bias: [English]
   keywords_file: config/keywords.txt
 spark:
@@ -57,6 +66,8 @@ audio:
 tts:
   engine: auto
   rate: 210
+  gain: 0.5
+  trim_db: -40
 contact:
   overlap_min: 0.10
   occlusion_drop: 0.30

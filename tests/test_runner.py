@@ -11,7 +11,30 @@ from reach.cli import parser, configure
 from reach.runner import Runner
 from reach.session_report import summarize
 from reach.trials import Trials
-from reach.types import HandObs
+from reach.types import HandObs, Frame, Decision
+from reach.controller import decide
+
+
+class FakeBrain:
+    """Only tests runner wiring; the actual reducer has its own owner and tests."""
+    def __init__(self, cfg, objects):
+        self.phrase = None
+        self.seq = 0
+    def step(self, now, *, hand, target, perception_stats, commands, speaking, frame_size, flipped):
+        effects = []
+        def effect(kind, text=None, key=None, payload=None):
+            return NS(kind=kind, text=text, key=key, payload=payload, priority=0)
+        for command in commands:
+            if command.kind == 'find':
+                self.phrase = command.phrase
+                effects.extend([effect('set_phrase', self.phrase), effect('perception_state', key='SEARCHING')])
+            elif command.kind in ('cancel', 'stop'):
+                self.phrase = None
+                effects.extend([effect('set_phrase', None), effect('perception_state', key='IDLE')])
+        frame = Frame(hand.frame_id if hand else 0, now, 0, *frame_size, 'synthetic', 'file')
+        result = decide(hand, target if self.phrase else None, frame, now=now, seq=self.seq, flipped=flipped)
+        self.seq += 1
+        return result, effects
 
 
 class FakeHand:
@@ -65,7 +88,7 @@ def test_file_loop_click_no_network_and_saved_inputs(tmp_path, monkeypatch):
     args = parser().parse_args(["run", "--mount", "handheld", "--source", str(video(tmp_path)),
         "--headless", "--mute", "--click", "100", "50", "--log-dir", str(tmp_path/"runs")])
     cfg = configure(args)
-    runner = Runner(cfg, args, hand_factory=FakeHand, audio_factory=FakeAudio)
+    runner = Runner(cfg, args, hand_factory=FakeHand, audio_factory=FakeAudio, brain_factory=FakeBrain)
     assert runner.run() == 0
     result = summarize(runner.run_dir)
     assert result["completed"] and not result["audio_measured"]
@@ -86,7 +109,7 @@ def test_hand_thread_failure_is_recorded_and_cleanup_finishes(tmp_path):
             raise RuntimeError("test failure")
     args = parser().parse_args(["run", "--mount", "fixed", "--source", str(video(tmp_path)),
         "--headless", "--mute", "--log-dir", str(tmp_path/"runs")])
-    runner = Runner(configure(args), args, hand_factory=BrokenHand, audio_factory=FakeAudio)
+    runner = Runner(configure(args), args, hand_factory=BrokenHand, audio_factory=FakeAudio, brain_factory=FakeBrain)
     assert runner.run() == 1
     assert not runner._hand_thread.is_alive()
     assert summarize(runner.run_dir)["errors"][0]["where"] == "hand_controller"
@@ -127,17 +150,97 @@ def test_trial_target_controls_preserve_scripted_phrases():
                            set_phrase=lambda value: calls.append(("phrase", value)),
                            force_query=lambda: calls.append(("recheck",)))
     runner.cfg = {"objects": ["wallet", "pen"]}
-    runner._trial = NS(mode="phrase", started=None, prepared=True)
+    runner._trial = NS(mode="phrase", started=None, prepared=True, phrase='wallet')
+    runner.inbox = NS(post=lambda command: calls.append((command.kind, command.phrase)))
     runner._mouse(cv2.EVENT_LBUTTONDOWN, 50, 60, None, None)
     runner._key(ord("1"), None)
-    runner._key(ord("c"), None)
     assert calls == []
     runner._key(ord("r"), None)
-    assert calls == [("recheck",)]
+    assert calls == [("recheck", None)]
     runner._trial.mode = "click"
+    runner._trial.phrase = 'clicked point'
     runner._mouse(cv2.EVENT_LBUTTONDOWN, 50, 60, None, None)
-    assert calls[-1] == ("point", (50, 60))
+    assert calls[-1] == ("find", 'clicked point')
     runner._trial.started = 1
     before = len(calls)
     runner._mouse(cv2.EVENT_LBUTTONDOWN, 80, 90, None, None)
     assert len(calls) == before
+
+
+def test_no_frame_intervals_still_tick_session_timers(tmp_path):
+    import time
+    class PausedCamera:
+        source = 'file'
+        def __init__(self, cfg, log=None):
+            self.log = log
+        def open(self):
+            pass
+        def start(self):
+            pass
+        def latest(self):
+            return None
+        def wait_newer(self, last, timeout):
+            time.sleep(timeout)
+            return None
+        def stats(self):
+            return {'error': None, 'eof': False, 'capture_fps': 0}
+        def stop(self):
+            pass
+    args = parser().parse_args(['run','--mount','fixed','--headless','--mute','--duration','.22',
+                               '--log-dir',str(tmp_path/'runs')])
+    runner = Runner(configure(args), args, camera_factory=PausedCamera, hand_factory=FakeHand,
+                    audio_factory=FakeAudio, brain_factory=FakeBrain)
+    assert runner.run() == 0
+    assert runner.brain.seq >= 3
+    assert not runner._hand_thread.is_alive()
+
+
+def test_injected_voice_posts_to_same_session_queue(tmp_path):
+    from reach.session_io import make_command
+    class Voice:
+        def __init__(self, cfg, log, post, **kwargs):
+            self.post = post
+        def start(self):
+            self.post(make_command('find', 'wallet', source='voice', transcript='find the wallet'))
+        def stop(self):
+            pass
+        def stats(self):
+            return {'connected': True, 'stereo_ok': True, 'input_name': 'synthetic microphone'}
+    class Perception:
+        def __init__(self, *args):
+            self.phrase = None
+        def start(self):
+            pass
+        def stop(self):
+            pass
+        def latest(self):
+            return None
+        def on_hand(self, hand):
+            pass
+        def set_phrase(self, phrase):
+            self.phrase = phrase
+        def set_state(self, state):
+            pass
+        def stats(self):
+            return {'error': None}
+    args = parser().parse_args(['run','--mount','fixed','--source',str(video(tmp_path)),
+        '--headless','--mute','--voice','--log-dir',str(tmp_path/'runs')])
+    runner = Runner(configure(args), args, hand_factory=FakeHand, audio_factory=FakeAudio,
+        perception_factory=Perception, voice_factory=Voice, brain_factory=FakeBrain)
+    assert runner.run() == 0
+    assert runner.brain.phrase == 'wallet'
+    commands = summarize(runner.run_dir)['commands']
+    assert commands[0]['kind'] == 'find' and commands[0]['phrase'] == 'wallet'
+
+
+def test_real_shared_reducer_file_integration_when_available(tmp_path, monkeypatch):
+    pytest.importorskip('reach.brain', reason='Shared reducer dependency has not been integrated yet')
+    from reach.sam_client import SamClient
+    monkeypatch.setattr(SamClient, 'segment', lambda *a: pytest.fail('Click mode cannot send images'))
+    args = parser().parse_args(['run','--mount','fixed','--source',str(video(tmp_path)),
+        '--headless','--mute','--no-voice','--contact','off','--click','100','50',
+        '--log-dir',str(tmp_path/'runs')])
+    runner = Runner(configure(args), args, hand_factory=FakeHand, audio_factory=FakeAudio)
+    assert runner.run() == 0
+    rows = [json.loads(line) for line in runner.log.path.read_text().splitlines()]
+    assert any(r['type']=='decision' and r['data'].get('cue') for r in rows)
