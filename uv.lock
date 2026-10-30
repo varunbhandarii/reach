@@ -1165,7 +1165,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mediapipe", specifier = ">=1.1.1" },
+    { name = "mediapipe", specifier = "==1.1.1" },
     { name = "meta-sam-parser", specifier = ">=0.1.0" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "openai", specifier = ">=3.39.0" },

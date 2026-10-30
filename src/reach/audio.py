@@ -49,11 +49,14 @@ def pluck(fs, frequencies, seconds):
 def make_earcons(fs):
     gap = np.zeros(round(fs*.015), np.float32)
     note = lambda f, s: pluck(fs, [f], s)
-    return {"found": np.concatenate([note(1046.5, .09), gap, note(1318.5, .13)]),
+    buffers = {"found": np.concatenate([note(1046.5, .09), gap, note(1318.5, .13)]),
             "lost": np.concatenate([note(1318.5, .09), gap, note(1046.5, .13)]),
             "reacquired": note(1396.9, .13),
             "contact": pluck(fs, [1046.5, 1318.5, 1568], .15),
             "wrong": np.concatenate([note(330, .08), gap, note(294, .08)])}
+    for buffer in buffers.values():
+        buffer /= max(.001, float(np.max(np.abs(buffer))))
+    return buffers
 
 
 class Tone:
@@ -63,7 +66,9 @@ class Tone:
         self.fs, self.blocksize = fs, blocksize
         self.phase = self.pulse_phase = 0.0
         self.current = np.array([0, math.log(440), 4, 0, 0, 0, 1.0])
-        self.earcons = make_earcons(fs)
+        level = min(.65, gain*2.5)*.70710678
+        self.earcons = {name: np.column_stack((buffer*level, buffer*level))
+                       for name, buffer in make_earcons(fs).items()}
         self.earcon = None
         self.position = 0
         self.base_gain = gain
@@ -73,8 +78,16 @@ class Tone:
         spectrum[(bands < 850) | (bands > 1550)] = 0
         self.noise = np.fft.irfft(spectrum).astype(np.float32)
         self.noise /= max(.001, float(np.sqrt(np.mean(self.noise**2))))
+        self._noise_period = len(self.noise)
+        self.noise = np.concatenate((self.noise, self.noise[:blocksize]))
         self.noise_pos = 0
         self._ramps = np.arange(1, blocksize+1)
+        self._coefficients = {}
+        for lost in (False, True):
+            for ducked in (False, True):
+                tau = np.array([.008, .025, .008, .030 if lost else .008, .008, .008,
+                                .008 if ducked else .125])
+                self._coefficients[lost, ducked] = np.exp(-self._ramps[:, None]/(self.fs*tau))
 
     def trigger(self, name):
         self.earcon, self.position = self.earcons[name], 0
@@ -87,18 +100,21 @@ class Tone:
                            0 if lost else cue.gain, float(cue.continuous), cue.noise,
                            10**(-16/20) if ducked else 1.0])
         # pitch 25 ms; pan/gain 8 ms; lost 30 ms; duck release 125 ms.
-        tau = np.array([.008, .025, .008, .030 if lost else .008, .008, .008,
-                        .008 if ducked else .125])
-        controls = target + (self.current-target) * np.exp(-samples[:, None] / (self.fs*tau))
+        coefficient = self._coefficients[bool(lost), bool(ducked)]
+        if frames != self.blocksize:
+            tau = np.array([.008, .025, .008, .030 if lost else .008, .008, .008,
+                            .008 if ducked else .125])
+            coefficient = np.exp(-samples[:, None]/(self.fs*tau))
+        controls = target + (self.current-target) * coefficient
         self.current = controls[-1].copy()
         pan, log_freq, pulse, gain, continuous, noise_gain, duck = controls.T
         angles = self.phase + np.cumsum(2*np.pi*np.exp(log_freq)/self.fs)
         pulses = self.pulse_phase + np.cumsum(2*np.pi*pulse/self.fs)
         self.phase, self.pulse_phase = float(angles[-1] % (2*np.pi)), float(pulses[-1] % (2*np.pi))
-        indices = (np.arange(frames) + self.noise_pos) % len(self.noise)
-        self.noise_pos = int((self.noise_pos + frames) % len(self.noise))
+        noise = self.noise[self.noise_pos:self.noise_pos+frames]
+        self.noise_pos = int((self.noise_pos + frames) % self._noise_period)
         envelope = continuous + (1-continuous) * (.5-.5*np.cos(pulses))
-        mono = gain * duck * (envelope*np.sin(angles) + self.noise[indices]*noise_gain)
+        mono = gain * duck * (envelope*np.sin(angles) + noise*noise_gain)
         active = self.earcon is not None
         if active:
             mono *= .5
@@ -107,9 +123,7 @@ class Tone:
         out[:, 1] = mono*np.sin(theta)
         if active:
             count = min(frames, len(self.earcon)-self.position)
-            ear = self.earcon[self.position:self.position+count] * min(.65, self.base_gain*2.5)
-            out[:count, 0] += ear*.70710678
-            out[:count, 1] += ear*.70710678
+            out[:count] += self.earcon[self.position:self.position+count]
             self.position += count
             if self.position >= len(self.earcon):
                 self.earcon = None
