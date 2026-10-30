@@ -5,18 +5,22 @@ import time
 
 
 class Trials:
-    def __init__(self, count, mode, objects, log, *, seed=1, limit=45, clock=time.perf_counter):
+    def __init__(self, count, mode, objects, log, *, seed=1, limit=45, clock=time.perf_counter, retained=()):
         if count < 1 or not objects or limit <= 0:
             raise ValueError("Trials need a positive count, time limit and nonempty objects")
         self.count, self.mode, self.objects = count, mode, objects
         self.log, self.limit, self.clock = log, limit, clock
         self.rng = random.Random(seed)
-        self.index = 0
+        if [row.get('index') for row in retained] != list(range(1, len(retained)+1)) or len(retained) >= count:
+            raise ValueError('Retained trials must be a consecutive unfinished prefix')
+        self.index = len(retained)
+        for _ in retained:
+            self.rng.choice(objects)
         self.started = None
         self.phrase = None
         self.prepared = False
         self.finished = False
-        self.results = []
+        self.results = [dict(row) for row in retained]
         self.contact_fired_s = None
 
     def prepare(self, perception, frame):

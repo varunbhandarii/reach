@@ -27,6 +27,7 @@ from .types import CONTRACT_VERSION
 from .voice import VoiceClient
 from .tts import Speaker, SilentSpeaker
 from .session_io import CommandInbox, TrialActions, make_command
+from .trial_resume import load_trial_resume, saved_trial_prefix
 
 
 class Runner:
@@ -34,6 +35,14 @@ class Runner:
                  audio_factory=CueEngine, perception_factory=Perception, brain_factory=None,
                  voice_factory=VoiceClient, speaker_factory=Speaker):
         self.cfg, self.args = cfg, args
+        self._resume = None
+        retained = []
+        if args.resume_trials:
+            self._resume = load_trial_resume(args.resume_trials, count=args.trials,
+                mode=args.trial_mode, objects=cfg['objects'], seed=args.trial_seed,
+                limit=args.trial_seconds, mount=args.mount, prediction=args.predict,
+                source=cfg['camera']['source'])
+            retained, _ = saved_trial_prefix(self._resume)
         if brain_factory is None:
             from .brain import Brain
             brain_factory = Brain
@@ -73,7 +82,7 @@ class Runner:
         self._contact_signals = {}
         self._trial_actions = TrialActions(self)
         self._trial = (Trials(args.trials, args.trial_mode, cfg["objects"], self.log,
-            seed=args.trial_seed, limit=args.trial_seconds) if args.trials else None)
+            seed=args.trial_seed, limit=args.trial_seconds, retained=retained) if args.trials else None)
 
     def _manifest(self):
         result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
@@ -89,6 +98,9 @@ class Runner:
                 "opencv_threads": self.cfg.get("runtime", {}).get("opencv_threads", 1),
                 "objects": self.cfg["objects"], "trial_mode": self.args.trial_mode if self._trial else None,
                 "trial_seed": self.args.trial_seed if self._trial else None,
+                "trial_count": self.args.trials if self._trial else None,
+                "trial_seconds": self.args.trial_seconds if self._trial else None,
+                "trial_resume": self._resume,
                 "camera_median_assumption_ms": self.args.camera_latency_ms,
                 "voice": {k:v for k,v in self.cfg.get('voice', {}).items() if k not in ('api_key', 'access_token')},
                 "tts": dict(self.cfg.get('tts', {})), "contact": dict(self.cfg.get('contact', {})),
@@ -318,6 +330,11 @@ class Runner:
             manifest = self._manifest()
             self.log.write_manifest(manifest)
             self.log.emit("session_start", manifest)
+            if self._resume:
+                self.log.emit('trial_resume', self._resume)
+                print(f"Continuing at trial {self._resume['interrupted_trial']}/{self.args.trials}; "
+                      f"{self._resume['completed_prefix']} earlier outcomes retained. "
+                      "The interrupted attempt remains in the original run.", flush=True)
             self.camera.open()
             self.camera.start()
             if not self.args.mute:

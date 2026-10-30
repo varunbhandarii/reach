@@ -8,6 +8,7 @@ import sys
 import time
 
 from .config import load_config
+from .trial_resume import TrialResumeError
 
 
 def parser():
@@ -32,6 +33,7 @@ def parser():
     run.add_argument("--flip", choices=["auto", "on", "off"], default="auto")
     run.add_argument("--camera-latency-ms", type=float, help="Previously measured camera median, for a component latency estimate")
     run.add_argument("--trials", type=int, default=0)
+    run.add_argument('--resume-trials', type=Path, help='Continue an interrupted scripted run in a new linked folder; --trials keeps the original total')
     run.add_argument("--trial-mode", choices=["click", "phrase", "voice"], default="phrase")
     run.add_argument('--no-voice', action='store_true', help='Do not open or upload microphone audio')
     run.add_argument('--voice', action='store_true', help='Explicitly enable microphone streaming with file or muted sources')
@@ -98,6 +100,8 @@ def configure(args):
         raise ValueError("Camera latency cannot be negative")
     if args.headless and args.trials:
         raise ValueError("Interactive trials need the overlay window")
+    if args.resume_trials and not args.trials:
+        raise TrialResumeError('Use --trials with the original total when resuming.')
     if args.phrase and args.click:
         raise ValueError("Choose either a phrase or a clicked point")
     if args.trials and (args.phrase or args.click):
@@ -146,6 +150,9 @@ def main(argv=None):
         cfg = configure(args)
         from .runner import Runner
         return Runner(cfg, args).run()
+    except TrialResumeError as exc:
+        print(f'Cannot resume trials: {exc}', file=sys.stderr)
+        return 2
     except ImportError:
         print('Shared session modules are not available. Update to the integrated session build.', file=sys.stderr)
         return 2

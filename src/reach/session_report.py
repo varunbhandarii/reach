@@ -30,12 +30,23 @@ def summarize(run_dir):
                     ratio = float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum()/initial)
             trials.append({**event["data"], "relative_path_length_ratio": ratio})
             active, path = None, []
+    recovery = None
+    current_trials = list(trials)
+    if manifest.get('trial_resume'):
+        from .trial_resume import saved_trial_prefix, TrialResumeError
+        prefix, recovery = saved_trial_prefix(manifest['trial_resume'])
+        expected = list(range(len(prefix)+1, len(prefix)+len(trials)+1))
+        if [row.get('index') for row in trials] != expected:
+            raise TrialResumeError('Continuation outcomes do not follow the retained source trials.')
+        trials = prefix+trials
+        recovery['attempt_count'] = len(prefix)+1+len(current_trials)
     summary.update(mount=manifest["mount"], source=manifest["source"], objects=manifest["objects"],
         prediction=manifest["prediction"], trial_mode=manifest.get("trial_mode"), completed=saved.get("completed", False),
         duration_s=saved.get("duration_s"), audio_measured=saved.get("audio_measured", False),
         audio_underflows=saved.get("audio", {}).get("underflows"),
         audio_callback_errors=saved.get("audio", {}).get("callback_errors"),
-        capture=saved.get("capture"), trials=trials,
+        capture=saved.get("capture"), trials=trials, trial_recovery=recovery,
+        current_session_trials=current_trials,
         trial_successes=sum(t["success"] for t in trials),
         motion_to_sound_estimate_ms=saved.get("motion_to_sound_estimate_ms"),
         latency_note=manifest.get("latency_note"),

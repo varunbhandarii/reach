@@ -65,6 +65,15 @@ uncovering to press `t` for a reported touch or `f` for failure. `n` prepares th
 next trial. The default time limit is 45 seconds. Automatic contact timestamps
 and operator reports are recorded separately; a chime does not establish touch.
 
+An interrupted scripted run can continue in a new folder with
+`--resume-trials path/to/old/run --trials ORIGINAL_TOTAL`. Keep its original
+objects, trial mode, seed, time limit, mount, prediction and camera source.
+Completed trial outcomes, including failures, are retained; the interrupted
+trial starts again with a fresh timer and its original target. The old files are
+read only and fingerprinted. Reports label the recovered sequence and preserve
+the original interruption separately; current-session timing and errors remain
+separate from the earlier process.
+
 Each run saves a manifest, events, JPEG frames and a summary under ignored
 `runs/`. Logs can contain microphone transcripts as well as images; keep runs
 local and do not commit them. Raw microphone audio is not saved.
