@@ -21,10 +21,10 @@ uv run pytest
 Copy `.env.example` to `.env` and add your own Meta Model API key. Never commit `.env`.
 
 Capture, hand tracking, stereo guidance, target perception and the overlay are
-implemented. This branch adds microphone streaming, local speech mixing and
-session integration against the shared reducer interfaces. The shared grammar,
-reducer and contact modules must be integrated before `reach run` can start.
-The independent `reach speak` command works without those modules.
+implemented, along with microphone commands, local speech mixing, the session
+reducer and the contact heuristic. Live recognition and contact accuracy still
+need hardware validation. The independent `reach speak` command checks local
+speech without opening the microphone or camera.
 
 Save the [official hand model](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task)
 as `models/hand_landmarker.task`, or set `hand.model_path` in your local config.
