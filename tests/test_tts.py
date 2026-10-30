@@ -107,3 +107,15 @@ def test_found_phrase_cache_includes_every_direction():
     for where in ('to your left','to your right','straight ahead','ahead on your left',
                   'ahead on your right','back toward you','back on your left','back on your right'):
         assert f'Found the wallet, {where}.' in texts
+
+
+def test_startup_wait_populates_cache_before_live_commands():
+    audio=engine()
+    speaker=Speaker({'objects':[]},audio,engine_factory=NullEngine)
+    try:
+        assert speaker.wait_ready(timeout=2)
+        assert speaker.stats()['cache_ready']
+        assert speaker.stats()['cached_phrases']==8
+        assert not speaker.busy
+    finally:
+        speaker.stop()
