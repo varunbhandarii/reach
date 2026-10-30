@@ -100,5 +100,14 @@ local and reports a miss without calling the API. The runner can map its
 `runs/sam-cache/` and are keyed by image bytes, phrase, model, confidence cutoff
 and dimensions. Run folders can contain sensitive images; keep them local.
 
-The camera, hand, audio and command interfaces still use simulation stubs on
-this branch. A real capture source and runner are required for live guidance.
+Live camera capture, hand tracking, stereo guidance, overlay and run logging
+are implemented. Voice-command and speech-output interfaces still contain
+simulation stubs.
+
+Late segmentation results also receive a conservative appearance check using
+`camera.get(frame_id)` and the stored source mask. A large color disagreement
+in a clear target region clears guidance and requests a fresh frame. Visible
+hand occlusion exempts this check. `motion.appearance_guard` controls it; the
+check detects gross changes and does not establish object identity. Repeated
+selection of the same phrase refreshes the search without discarding a pending
+result or a current lock.
