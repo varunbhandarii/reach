@@ -103,7 +103,7 @@ class SayEngine:
 
 def phrase_texts(objects):
     texts = ['I see more than one.', 'Bring your hand into view.', 'Checking.', 'Cancelled.',
-             'Stopped.', 'Ready.', 'Voice is offline. Use the keys.', 'Connection problem. Still trying.']
+             'Stopped.', 'Ready.', 'I heard yes.', 'I heard no.', 'Voice is offline. Use the keys.', 'Connection problem. Still trying.']
     for obj in objects:
         texts.extend([f'Looking for the {obj}.', f"I can't see the {obj} yet. Move the phone slowly.",
             f"I couldn't find the {obj}.", f'Lost the {obj}. Hold the phone still.', f'I lost the {obj}.',

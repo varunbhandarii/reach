@@ -84,7 +84,7 @@ def test_veto_repeat_no_choose_and_offline_network_notices():
     assert d.state=='IDLE' and keys(e,'speak')==['cancelled']
     assert keys(step(b,1.3,[cmd('repeat')])[1],'speak')==['cancelled']
     d,e=step(b,1.4,[cmd('yes'),cmd('choose','right')],voice_online=False)
-    assert keys(e,'speak')==['voice_off'] and d.state=='IDLE'
+    assert keys(e,'speak')==['yes_ack','voice_off'] and d.state=='IDLE'
     assert step(b,1.5,voice_online=False)[0].speech is None
     step(b,2,[cmd('find','wallet')])
     assert 'network' in keys(step(b,3,consecutive_errors=2)[1],'speak')
@@ -133,7 +133,7 @@ def test_contact_speech_completion_and_passive_commands():
     b=Brain();b.state='CONTACT';b.phrase='wallet'
     d,e=b.step(.2,speaking=False)
     assert d.state=='DONE' and any(x.kind=='set_phrase' and x.text is None for x in e)
-    b=Brain();d,e=step(b,0,[cmd('yes'),cmd('no'),cmd('choose','left'),cmd('unknown')])
+    b=Brain();d,e=step(b,0,[cmd('choose','left'),cmd('unknown')])
     assert d.state=='IDLE' and e==[]
 
 
@@ -156,3 +156,16 @@ def test_prediction_setting_from_session_config_is_used():
         results.append(step(b,.1,hand=moving,target=t())[0])
     assert results[0].dx == pytest.approx((150-40)/640)
     assert results[1].dx < results[0].dx
+
+
+@pytest.mark.parametrize('kind',['yes','no'])
+@pytest.mark.parametrize('active',[False,True])
+def test_yes_no_acknowledges_without_changing_search_or_guidance(kind,active):
+    b=guiding() if active else Brain()
+    previous_state,previous_phrase=b.state,b.phrase
+    d,e=step(b,.3,[cmd(kind)],hand=h(3) if active else None,target=t() if active else None)
+    assert (d.state,b.phrase)==(previous_state,previous_phrase)
+    assert keys(e,'speak')==[f'{kind}_ack']
+    assert d.speech==f'I heard {kind}.'
+    assert next(x.priority for x in e if x.kind=='speak')==0
+    assert not any(x.kind in ('set_phrase','force_query','earcon') for x in e)

@@ -37,7 +37,7 @@ class Trials:
         self.log.emit("trial_prepare", {"index": self.index+1, "phrase": self.phrase, "mode": self.mode})
         print(f"Trial {self.index+1}/{self.count}: {self.phrase}. "
               f"{'Say the find command. ' if self.mode == 'voice' else ''}"
-              'Wait for target; SPACE starts, then cover eyes before reaching.', flush=True)
+              'Wait for target; SPACE starts the timed reach.', flush=True)
 
     def start(self, ready):
         if self.prepared and self.started is None and ready:
