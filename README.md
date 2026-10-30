@@ -111,3 +111,9 @@ hand occlusion exempts this check. `motion.appearance_guard` controls it; the
 check detects gross changes and does not establish object identity. Repeated
 selection of the same phrase refreshes the search without discarding a pending
 result or a current lock.
+
+The deterministic command/session/contact components and local speech engine
+are described in [session integration](docs/session-integration.md).
+`reach replay-contact RUN_DIR --frames` inspects saved box/contact geometry
+without network or device access. Live voice and mixed speech need the runner
+integration to consume these interfaces.

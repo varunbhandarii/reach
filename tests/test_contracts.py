@@ -10,6 +10,7 @@ from reach.types import (
     CueParams,
     Decision,
     Frame,
+    Effect,
     HandObs,
     Instance,
     TargetObs,
@@ -34,6 +35,7 @@ def _restore(value, original):
 @pytest.mark.parametrize(
     "sample",
     [
+        Effect("speak", "Looking for the wallet.", "looking", 1),
         Frame(3, 1.25, 1_777_000_000.5, 640, 480, "abc123", "iphone_continuity"),
         HandObs(3, True, (12.5, 22.5), (15.0, 24.0), ((1.0, 2.0), (3.0, 4.0)), (4.0, -2.0), 0.98),
         Instance("14", (10, 20, 30, 40), 0.86, {"size": [20, 20], "counts": "abc"}),
@@ -42,7 +44,7 @@ def _restore(value, original):
         CueParams(0.5, 440.0, 4.0, False, 0.2, 0.3),
         Decision(11, 3.5, "GUIDING", 0.1, -0.2, 0.3, CueParams(0.5, 440.0, 4.0, False, 0.2, 0.3), None, "found"),
     ],
-    ids=["frame", "hand-observation", "instance", "target-observation", "command", "cue", "decision"],
+    ids=["effect", "frame", "hand-observation", "instance", "target-observation", "command", "cue", "decision"],
 )
 def test_contract_round_trips_through_json(sample):
     encoded = json.dumps(asdict(sample), ensure_ascii=False)

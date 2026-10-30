@@ -41,12 +41,14 @@ class Perception:
         self._generation = 0
         self._seen_generation = -1
         self._state = "IDLE"
+        self._externally_driven = False
+        self._last_ok = None
         self._inflight = None
         self._last_applied = -1
         self._req_id = 0
         self._seed_time = None
         self._ambiguous = False
-        self._metrics = {"images_sent": 0, "responses_dropped": 0, "errors": 0, "cache_hits": 0, "appearance_rejections": 0}
+        self._metrics = {"images_sent": 0, "responses_dropped": 0, "errors": 0, "cache_hits": 0, "appearance_rejections": 0, "instances_last": 0, "consecutive_errors": 0}
         self._fatal = None
 
     def start(self):
@@ -110,7 +112,8 @@ class Perception:
 
     def set_state(self, state: str):
         with self._lock:
-            self._state = state.upper()
+            self._externally_driven = True
+            self._state = 'IDLE' if state.upper() in ('CONTACT','DONE') else state.upper()
             if self._state in ("IDLE", "STOPPED"):
                 self._generation += 1
                 self._target = None
@@ -134,6 +137,7 @@ class Perception:
         with self._lock:
             return {**self._metrics, **self.tracker.stats(), "ambiguous": self._ambiguous,
                     "in_flight": self._inflight is not None, "state": self._state,
+                    "last_ok_age_ms": max(0,(self._clock()-self._last_ok)*1000) if self._last_ok is not None else None,
                     "error": self._fatal, "estimated_cost_usd": self._metrics["images_sent"]*.0025}
 
     def _emit(self, kind, data):
@@ -208,6 +212,7 @@ class Perception:
             status = "error" if error else "ok"
             if error:
                 self._metrics["errors"] += 1
+                self._metrics["consecutive_errors"] += 1
                 if isinstance(error, SamRateLimited):
                     self.scheduler.backoff(self._clock(), error.retry_after)
                 elif error.kind in ("permanent", "cache_miss"):
@@ -215,6 +220,9 @@ class Perception:
                         self._fatal = str(error)
                 else:
                     self.scheduler.backoff(self._clock(), 1)
+            else:
+                self._metrics["consecutive_errors"] = 0
+                self._last_ok = self._clock()
             invalid = (job["generation"] != self._generation or self._mode != "phrase"
                        or self._state in ("IDLE", "STOPPED") or job["frame"].id <= self._last_applied
                        or self._clock()-job["submitted"] > 3
@@ -235,7 +243,9 @@ class Perception:
                 # No detection is not permission to retain an unconfirmed target.
                 self.tracker.clear()
                 self._target = None
-                self._state = "SEARCHING"
+                self._metrics["instances_last"] = 0
+                if not self._externally_driven:
+                    self._state = "SEARCHING"
                 continue
             confidence = lambda pair: pair[1].conf if pair[1].conf is not None else 0
             ranked = sorted(candidates, key=confidence, reverse=True)
@@ -253,7 +263,8 @@ class Perception:
                     self._metrics["appearance_rejections"] += 1
                     self.tracker.clear()
                     self._target = None
-                    self._state = "SEARCHING"
+                    if not self._externally_driven:
+                        self._state = "SEARCHING"
                     self.scheduler.force()
                     self._emit("target_reject", {"req_id": job["id"], "frame_id": self.tracker.frame.id,
                         "source_frame_id": job["frame"].id, "reason": "appearance_changed", **distances})
@@ -261,7 +272,9 @@ class Perception:
             if self.tracker.reseed(job["frame"].id, instances[selected]):
                 self._last_applied = job["frame"].id
                 self._seed_time = job["frame"].t_mono
-                self._state = "GUIDING"
+                self._metrics["instances_last"] = len(instances)
+                if not self._externally_driven:
+                    self._state = "GUIDING"
                 self._publish("sam")
 
     def _publish(self, source="tracker"):
@@ -286,6 +299,7 @@ class Perception:
                 self.scheduler.reset()
                 self._last_applied = -1
                 self._ambiguous = False
+                self._metrics["instances_last"] = 0
                 self._seen_generation = self._generation
                 if self._mode == "click":
                     x, y = self._point

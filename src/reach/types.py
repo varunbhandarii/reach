@@ -1,9 +1,17 @@
-"""Shared immutable messages. Coordinates are source-image pixels."""
+"""Shared immutable messages. Coordinates are source-image pixels.
+
+Event envelope stays seq/t_mono/t_wall/trial/type/data. New payloads include:
+command (kind, phrase, transcript, turn_id, source, untested_noun), state
+(from, to, reason, phrase), contact (event, inside, still, overlap, rel_speed,
+hold_frames, hand_frame_id, target_frame_id), voice_session/voice_turn and
+speech request/start/end/cancel/drop. Hand payloads add landmarks_px; trial_end
+adds contact_fired_s while preserving manual outcome provenance.
+"""
 
 from dataclasses import dataclass
 from typing import Literal
 
-CONTRACT_VERSION = "2"
+CONTRACT_VERSION = "3"
 Source = Literal["android_mjpeg", "iphone_continuity", "usb_webcam", "file"]
 CommandKind = Literal[
     "find", "choose", "cancel", "start_over", "repeat", "recheck", "yes", "no", "stop", "unknown"
@@ -59,6 +67,7 @@ class Command:
     transcript: str
     turn_id: int | None
     t_mono: float
+    source: Literal["voice", "voice_fast", "ptt", "key", "trial"] = "voice"
 
 
 @dataclass(frozen=True)
@@ -84,3 +93,12 @@ class Decision:
     earcon: str | None
     hand_frame_id: int | None = None
     target_frame_id: int | None = None
+
+
+@dataclass(frozen=True)
+class Effect:
+    kind: Literal["speak", "cancel_speech", "earcon", "set_phrase", "force_query", "perception_state", "log"]
+    text: str | None = None
+    key: str | None = None
+    priority: int = 0
+    payload: dict | None = None
