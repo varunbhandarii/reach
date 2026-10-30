@@ -169,6 +169,12 @@ def test_trial_target_controls_preserve_scripted_phrases():
 
 def test_no_frame_intervals_still_tick_session_timers(tmp_path):
     import time
+    class TickingBrain(FakeBrain):
+        def step(self, *args, **kwargs):
+            result = super().step(*args, **kwargs)
+            if self.seq >= 3:
+                runner._stop.set()
+            return result
     class PausedCamera:
         source = 'file'
         def __init__(self, cfg, log=None):
@@ -186,10 +192,10 @@ def test_no_frame_intervals_still_tick_session_timers(tmp_path):
             return {'error': None, 'eof': False, 'capture_fps': 0}
         def stop(self):
             pass
-    args = parser().parse_args(['run','--mount','fixed','--headless','--mute','--duration','.22',
+    args = parser().parse_args(['run','--mount','fixed','--headless','--mute','--duration','3',
                                '--log-dir',str(tmp_path/'runs')])
     runner = Runner(configure(args), args, camera_factory=PausedCamera, hand_factory=FakeHand,
-                    audio_factory=FakeAudio, brain_factory=FakeBrain)
+                    audio_factory=FakeAudio, brain_factory=TickingBrain)
     assert runner.run() == 0
     assert runner.brain.seq >= 3
     assert not runner._hand_thread.is_alive()
