@@ -14,3 +14,6 @@ class Speaker:
 
     def stop(self) -> None:
         self.last_text = None
+
+# Engine interface for the speech-stream worker.
+from .say_engine import SayEngine

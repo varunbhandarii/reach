@@ -221,3 +221,26 @@ def test_late_result_with_changed_appearance_stays_silent(monkeypatch):
     assert p.stats()['appearance_rejections'] == 1
     assert any(kind == 'target_reject' for kind, data in log.events)
     assert p._req_id == 2  # Fresh frame requested, rather than applying the changed patch.
+
+
+def test_external_lost_hand_state_survives_sam_refresh():
+    c=Camera();p=Perception({},c,None)
+    p.set_phrase('wallet');p.process(c.frame(0),c.image)
+    job=p._jobs.get_nowait();p.set_state('HAND_LOST')
+    p._results.put((job,(Instance('1',(100,200,150,250),.9,None),),None,100))
+    p.process(c.frame(1),c.image)
+    assert p.stats()['state']=='HAND_LOST' and p.stats()['instances_last']==1
+    assert p.stats()['last_ok_age_ms'] is not None
+    p.set_state('IDLE');p.process(c.frame(2),c.image)
+    assert p.latest() is None
+
+
+def test_consecutive_error_count_resets_on_success():
+    from reach.sam_client import SamNetworkError
+    c=Camera();p=Perception({},c,None)
+    p.set_phrase('wallet');p.process(c.frame(0),c.image);job=p._jobs.get_nowait()
+    for i in (1,2):
+        p._results.put((job,(),SamNetworkError('offline'),100));p.process(c.frame(i),c.image)
+    assert p.stats()['consecutive_errors']==2
+    p._results.put((job,(),None,100));p.process(c.frame(3),c.image)
+    assert p.stats()['consecutive_errors']==0

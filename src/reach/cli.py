@@ -40,6 +40,10 @@ def parser():
     ears.add_argument("--config", type=Path)
     report = commands.add_parser("report", help="Summarize one saved run")
     report.add_argument("run_dir", type=Path)
+    replay = commands.add_parser("replay-contact", help="Replay contact geometry from a saved local run")
+    replay.add_argument("run_dir", type=Path)
+    replay.add_argument("--frames", action="store_true")
+    replay.add_argument("--force", action="store_true")
     return result
 
 
@@ -106,6 +110,10 @@ def main(argv=None):
                     return 1
             finally:
                 engine.stop()
+            return 0
+        if args.command == "replay-contact":
+            from .replay_contact import replay_contact
+            print(json.dumps(replay_contact(args.run_dir, frames=args.frames, force=args.force), indent=2))
             return 0
         if args.command == "report":
             from .session_report import summarize
