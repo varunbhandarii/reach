@@ -60,8 +60,17 @@ def test_stream_transport_status_and_completion(monkeypatch):
         def getresponse(self): return response
         def close(self): pass
     monkeypatch.setattr('reach.sam_client.http.client.HTTPSConnection', Connection)
+    # Mask decoding has dedicated tests above; transport/status coverage must
+    # not race the request watchdog while decoding a large fixture on CI.
+    from reach.types import Instance
+    parsed=[]
+    def parse(text, frame, conf_min):
+        parsed.append((text, frame, conf_min))
+        return (Instance('0',(10,10,20,20),.9,None),)
+    monkeypatch.setattr('reach.sam_client.parse_instances',parse)
     response = Response(payload)
     assert SamClient(api_key='test-placeholder').segment(b'jpeg', 'wallet', FRAME)[0].sam_id == '0'
+    assert parsed == [(TEXT,FRAME,.5)]
     response = Response(b'')
     response.status = 429
     with pytest.raises(SamRateLimited) as err:
