@@ -21,7 +21,8 @@ class Perception:
     """Start after Camera.open/start; stop before closing the run log.
 
     Camera supplies wait_newer(last_id, timeout), returning (Frame, BGR image)
-    or None, and get_jpeg(frame_id). No camera is opened by this component.
+    or None, get_jpeg(frame_id), and get(frame_id) for source-image appearance
+    checks. No camera is opened by this component.
     """
 
     def __init__(self, cfg, camera, log, *, segmenter=None, clock=time.perf_counter):
