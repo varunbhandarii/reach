@@ -17,6 +17,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .config import PROJECT_ROOT
 from .types import Command
+from .voice_endpoint import EnergyEndpoint, capture_end_time
 
 URI = 'wss://api.meta.ai/v1/asr/realtime'
 
@@ -74,6 +75,10 @@ class VoiceClient:
         self._input_name = None
         self._stereo_ok = True
         self._latencies = deque(maxlen=1200)
+        self._local_latencies = deque(maxlen=1200)
+        self._endpoint = EnergyEndpoint()
+        self._last_local_turn = None
+        self._streamed_samples = 0
         self._last_transcript = ''
         self._last_activity = self._clock()
         self._active_turns = set()
@@ -109,9 +114,10 @@ class VoiceClient:
             self._connected = self.running = False
             self._closed.set()
 
-    def _enqueue(self, pcm):
+    def _enqueue(self, pcm, capture_end=None, time_valid=False):
         if self._stop_event.is_set():
             return
+        self._endpoint.accept(pcm,self._clock() if capture_end is None else capture_end,time_valid)
         if self._ptt_queue is not None and not self._ptt_end.is_set():
             if self._ptt_queue.full():
                 self._ptt_queue.get_nowait()
@@ -125,7 +131,8 @@ class VoiceClient:
     def _callback(self, data, frames, timing, status):
         self._overflows += bool(status)
         try:
-            self._loop.call_soon_threadsafe(self._enqueue, bytes(data))
+            stamp,valid = capture_end_time(self._clock(),timing,frames)
+            self._loop.call_soon_threadsafe(self._enqueue,bytes(data),stamp,valid and not bool(status))
         except RuntimeError:
             pass
 
@@ -175,8 +182,8 @@ class VoiceClient:
                     code = exc.rcvd.code if exc.rcvd else 1006
                 except (OSError, TimeoutError, websockets.exceptions.WebSocketException):
                     code = 1006
-                except ValueError:
-                    code = 1008
+                except (ValueError, TypeError):
+                    code = 1006
                 self._connected = False
                 self._last_code = code
                 if self._stop_event.is_set():
@@ -228,12 +235,24 @@ class VoiceClient:
     async def _ack(self, ws, mode):
         self._session_event('open', mode)
         await ws.send(json.dumps(self._handshake(mode)))
-        message = json.loads(await asyncio.wait_for(ws.recv(), 10))
-        if not isinstance(message, dict) or not isinstance(message.get('sessionId'), str) or message.get('type') == 'error':
-            raise ValueError('Voice handshake rejected')
+        async with asyncio.timeout(10):
+            while True:
+                message = json.loads(await ws.recv())
+                if isinstance(message,dict) and message.get('type') == 'error':
+                    self._server_error(message,mode)
+                    continue
+                if not isinstance(message, dict) or not isinstance(message.get('sessionId'), str):
+                    raise ValueError('Invalid voice acknowledgement')
+                break
         self._sessions += 1
         self._session_event('ack', mode, session_id=message['sessionId'])
         return message['sessionId']
+
+    def _server_error(self,event,mode='ENDPOINTING',session_id=None):
+        message = str(event.get('message','Voice server error'))
+        if self._key:
+            message = message.replace(self._key,'[redacted]')
+        self._session_event('server_error',mode,session_id=session_id,message=message[:500])
 
     def _parse(self, text, turn_id, source):
         if self._parser is None:
@@ -263,6 +282,7 @@ class VoiceClient:
                 while True:
                     pcm = await self._queue.get()
                     await ws.send(bytes(len(pcm)) if self._ptt_pending else pcm)
+                    self._streamed_samples += len(pcm)//2
 
             async def receive():
                 nonlocal active_id
@@ -276,18 +296,21 @@ class VoiceClient:
                     now = self._clock()
                     kind, tid = event.get('type'), event.get('turnId')
                     if kind == 'error':
-                        raise ValueError('Voice server rejected session')
+                        self._server_error(event,session_id=session)
+                        continue
                     if kind == 'speechStart':
                         active_id = tid
                         self._active_turns.add(tid)
                         ignore = self._ptt_pending or (self.cfg.get('ignore_during_speech', False) and self._speaking())
                         turns[tid] = {'start': now, 'end': None, 'ignore': ignore,
-                                      'start_audio_ms': event.get('audioProcessedMs')}
+                                      'start_audio_ms': event.get('audioProcessedMs'),
+                                      'dropped':self._dropped,'overflows':self._overflows}
                         if not ignore and self.cfg.get('barge_in', True) and self._on_speech_start:
                             self._on_speech_start()
                     elif kind == 'speechEnd':
                         info = turns.setdefault(tid, {'start': None, 'ignore': self._ptt_pending})
                         info.update(end=now, end_audio_ms=event.get('audioProcessedMs'))
+                        info['local_end'] = self._endpoint.end(self._last_local_turn)
                     elif kind == 'transcript':
                         text = event.get('transcript', '')
                         if not isinstance(text, str):
@@ -314,12 +337,24 @@ class VoiceClient:
                         latency = (now-info['end'])*1000 if info.get('end') is not None else None
                         if latency is not None and not info['ignore']:
                             self._latencies.append(latency)
+                        local_end = info.get('local_end') or self._endpoint.end(self._last_local_turn)
+                        local_valid = (local_end is not None and now >= local_end
+                            and info.get('dropped') == self._dropped and info.get('overflows') == self._overflows)
+                        local_latency = (now-local_end)*1000 if local_valid else None
+                        if local_valid and not info['ignore']:
+                            self._local_latencies.append(local_latency)
+                        if local_end is not None:
+                            self._last_local_turn = local_end
                         self._turns += 1
                         self._emit('voice_turn', {'session_id': session, 'turn_id': tid, 'transcript': text,
                             't_speech_start': info.get('start'), 't_speech_end': info.get('end'), 't_complete': now,
                             'audio_processed_ms': event.get('audioProcessedMs', info.get('end_audio_ms')),
                             'speech_start_audio_processed_ms': info.get('start_audio_ms'),
                             'speech_end_audio_processed_ms': info.get('end_audio_ms'), 'latency_ms': latency,
+                            't_local_speech_end':local_end, 'latency_local_ms':local_latency,
+                            'local_latency_valid':local_valid,'energy_threshold':self._endpoint.threshold,
+                            'local_endpoint_resolution_ms':20,'local_endpoint_hangover_ms':200,
+                            'local_latency_note':'Calibrated energy estimate using capture timestamps; excludes turns with drops or overflows.',
                             'latency_source': 'server_event_receipt', 'mode': 'ENDPOINTING', 'ignored': bool(info['ignore'])})
                         match = fast.pop(tid, fast.pop(None, None))
                         command = self._parse(text, tid, 'voice') if not info['ignore'] else None
@@ -361,11 +396,15 @@ class VoiceClient:
 
     def stats(self):
         values = tuple(self._latencies)
+        local = tuple(self._local_latencies)
         ptt = tuple(self._ptt_latency)
         return {'connected': self._connected, 'sessions': self._sessions, 'reconnects': self._reconnects,
                 'turns': self._turns, 'dropped_frames': self._dropped, 'input_overflows': self._overflows,
                 'last_close_code': self._last_code, 'latency_p50_ms': float(np.median(values)) if values else None,
                 'latency_p95_ms': float(np.percentile(values, 95)) if values else None,
+                'latency_local_p50_ms':float(np.median(local)) if local else None,
+                'latency_local_p95_ms':float(np.percentile(local,95)) if local else None,
+                'streamed_audio_s':self._streamed_samples/24000,
                 'ptt_p50_ms': float(np.median(ptt)) if ptt else None, 'ptt_p95_ms': float(np.percentile(ptt, 95)) if ptt else None,
                 'input_name': self._input_name, 'last_transcript': self._last_transcript,
                 'stereo_ok': self._stereo_ok, 'ptt_active': self._ptt_pending, 'error': self._error}
@@ -405,6 +444,7 @@ class VoiceClient:
                         except TimeoutError:
                             continue
                         await ws.send(pcm)
+                        self._streamed_samples += len(pcm)//2
                     await ws.send(json.dumps({'type': 'endStream'}))
 
                 async def receive():
@@ -414,7 +454,8 @@ class VoiceClient:
                             continue
                         event = json.loads(raw)
                         if event.get('type') == 'error':
-                            raise ValueError('PTT server error')
+                            self._server_error(event,'PUSH_TO_TALK',session)
+                            continue
                         if event.get('type') == 'transcript':
                             text = event.get('transcript', '')
                             if isinstance(text, str):

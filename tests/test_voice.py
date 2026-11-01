@@ -39,6 +39,7 @@ def test_fake_server_fast_stop_reconnect_and_final_drain():
             acknowledgements.append(handshake)
             await ws.send(json.dumps({'sessionId': f'synthetic-{number}'}))
             if number in (1, 2):
+                await ws.send(json.dumps({'type':'error','message':'Temporary backend failure'}))
                 await ws.close(code=1011 if number == 1 else 1013)
                 return
             for event in [
@@ -72,6 +73,7 @@ def test_fake_server_fast_stop_reconnect_and_final_drain():
             assert client.stats()['sessions'] == 3 and client.stats()['reconnects'] == 2
             delays = [d['delay_s'] for k,d in events if k == 'voice_session' and 'delay_s' in d]
             assert delays == [0, 2]
+            assert len([d for k,d in events if k=='voice_session' and d.get('event')=='server_error'])==2
             assert all(h['authorization']['accessToken'] == 'Bearer synthetic' for h in acknowledgements)
             assert all(h['audioEncoding'] == 'PCM_24KHZ' for h in acknowledgements)
             turn = next(d for k,d in events if k == 'voice_turn' and d['turn_id'] == 1)
@@ -164,3 +166,23 @@ def test_real_grammar_preserves_command_provenance():
                        clock=lambda: 12.5)
     command=client._parse('Where is my wallet?',7,'voice')
     assert (command.kind,command.phrase,command.turn_id,command.t_mono,command.source)==('find','wallet',7,12.5,'voice')
+
+
+def test_actual_1008_close_disables_voice_after_logging_redacted_error():
+    async def scenario():
+        events=[]
+        async def handler(ws):
+            await ws.recv()
+            await ws.send(json.dumps({'type':'error','message':'Rejected key synthetic'}))
+            await ws.close(code=1008)
+        async with serve(handler,'127.0.0.1',0) as server:
+            port=server.sockets[0].getsockname()[1]
+            client=VoiceClient({},NS(emit=lambda k,d:events.append((k,d))),lambda c:None,
+                parser=parse,audio_source=source(),uri=f'ws://127.0.0.1:{port}',api_key='synthetic')
+            client.start()
+            await until(lambda:not client.running)
+            await asyncio.to_thread(client.stop)
+            assert client.stats()['last_close_code']==1008 and client.stats()['reconnects']==0
+            message=next(d['message'] for k,d in events if d.get('event')=='server_error')
+            assert 'synthetic' not in message and '[redacted]' in message
+    asyncio.run(scenario())
