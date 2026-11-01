@@ -203,3 +203,13 @@ def test_malformed_match_flag_cannot_claim_success():
     b,r=confirmation()
     d,e=b.step(.3,results=[answer(r,matches='true')])
     assert d.state=='DONE' and spoken(e)==["You're touching the wallet."]
+
+
+
+def test_dynamic_readback_text_cannot_overflow_speech_interface():
+    b,r=confirmation()
+    d,e=b.step(.3,results=[answer(r,hint='x'*1000)])
+    assert d.state=='DONE' and all(len(text)<=300 for text in spoken(e))
+    b,r=confirmation()
+    d,e=b.step(.3,results=[answer(r,False,object_name='x'*1000)])
+    assert all(len(text)<=300 for text in spoken(e))

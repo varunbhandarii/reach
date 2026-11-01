@@ -191,8 +191,8 @@ class Brain:
             elif result.matches:
                 if elapsed <= self._number('readback_wait_s',2.5) and not self._fallback_spoken:
                     self._speak(effects, f'You have {self._name()}.', 'confirmed', 2)
-                    if result.hint and result.hint.strip():
-                        self._speak(effects, ' '.join(result.hint.split()[:6]), 'hint', 0)
+                    if isinstance(result.hint,str) and result.hint.strip():
+                        self._speak(effects, ' '.join(result.hint.split()[:6])[:120], 'hint', 0)
                 else:
                     self._touching(effects)
                 self._finish_confirmation(now, effects, 'readback_match')
@@ -209,8 +209,8 @@ class Brain:
                     effects.append(Effect('cancel_speech'))
                     effects.append(Effect('earcon', key='wrong'))
                     self._speak(effects, f"That's not {self._name()}.", 'wrong_object', 2)
-                    if result.object_name and result.object_name.strip():
-                        name = ' '.join(result.object_name.split()[:3])
+                    if isinstance(result.object_name,str) and result.object_name.strip():
+                        name = ' '.join(result.object_name.split()[:3])[:80]
                         self._speak(effects, f'It looks like a {name}.', 'object_name', 0)
                     effects.append(Effect('exclude_instance', payload={
                         'frame_id': pending['frame_id'], 'box_xyxy': chosen.box_xyxy}))
