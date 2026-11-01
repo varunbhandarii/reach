@@ -242,7 +242,6 @@ class Runner:
             commands=commands, speaking=self.speaker.busy,
             frame_size=(frame.width, frame.height) if frame else (640, 480), flipped=flipped,**extra)
         self._effects(effects, now)
-        self.log.emit('brain_out',{'decision':asdict(decision),'effects':[asdict(e) for e in effects]})
         self.audio.set(None if self._muted or not voice.get('stereo_ok', True) else decision.cue)
         self._decision = decision
         self._decision_count += 1

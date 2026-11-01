@@ -36,7 +36,9 @@ def test_runner_builds_contact_frame_crop_polls_results_and_logs_exact_effects(t
             effects=[Effect('log',key='brain_in',payload={'now':now,'data':{'nested':'retained'},'results':[asdict(r) for r in results]})]
             if self.seq==1:
                 effects.append(Effect('readback',payload={'request_id':1,'frame_id':hand.frame_id,'phrase':'wallet','box_xyxy':[10,10,80,80]}))
-            return Decision(self.seq,now,'CONFIRMING',None,None,None,None,None,None),effects
+            decision=Decision(self.seq,now,'CONFIRMING',None,None,None,None,None,None)
+            effects.append(Effect('log',key='brain_out',payload={'decision':asdict(decision),'effects':[asdict(e) for e in effects]}))
+            return decision,effects
     args=parser().parse_args(['run','--mount','handheld','--source',str(video(tmp_path)),
         '--headless','--mute','--no-voice','--log-dir',str(tmp_path/'runs')])
     runner=Runner(configure(args),args,hand_factory=FakeHand,audio_factory=FakeAudio,
