@@ -197,7 +197,7 @@ class Runner:
                 self.perception.choose(effect.payload['sam_id'])
             elif effect.kind == 'exclude_instance':
                 payload = effect.payload
-                self.perception.exclude(payload['frame_id'],tuple(payload['box_xyxy']))
+                self.perception.exclude(payload['frame_id'],payload['box_xyxy'])
                 self._excluded.append(dict(payload))
             elif effect.kind == 'log':
                 kind,data = effect.key, effect.payload or {}

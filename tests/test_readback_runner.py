@@ -64,5 +64,5 @@ def test_choose_exclude_call_perception_and_keep_payload_unchanged():
     runner._excluded=[]
     payload={'frame_id':7,'box_xyxy':[1,2,3,4]}
     runner._effects([Effect('choose_instance',payload={'sam_id':'second'}),Effect('exclude_instance',payload=payload)],0)
-    assert calls==[('choose','second'),('exclude',7,(1,2,3,4))]
+    assert calls==[('choose','second'),('exclude',7,[1,2,3,4])]
     assert runner._excluded==[payload] and payload=={'frame_id':7,'box_xyxy':[1,2,3,4]}

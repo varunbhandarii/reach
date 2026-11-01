@@ -257,6 +257,7 @@ def test_instance_effects_reach_perception_with_source_geometry():
     from reach.types import Effect
     calls=[]
     runner=Runner.__new__(Runner)
+    runner._excluded=[]
     runner.perception=NS(choose=lambda ident:calls.append(('choose',ident)),
                          exclude=lambda frame,box:calls.append(('exclude',frame,box)))
     runner._effects([Effect('exclude_instance',payload={'frame_id':12,'box_xyxy':[1,2,3,4]}),
