@@ -77,6 +77,7 @@ box events, so it is not exact decision replay or physical touch ground truth.
 Legacy runs also lack landmarks. Preserve single-rater spot checks and failed
 or indeterminate cases.
 
-The current live runner, voice client and speech mixer require their separate
-integration changes to consume these interfaces. Libraries and offline replay
-can be used immediately; live voice/contact success is measured separately.
+The integrated live runner, voice client and speech mixer consume these
+interfaces. Startup waits for the speech cache before opening the microphone.
+Libraries and offline replay are usable independently; live voice/contact
+success and endurance are measured separately.

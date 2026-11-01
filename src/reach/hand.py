@@ -29,7 +29,7 @@ class OneEuro:
         raw = np.asarray(point, float)
         if self.value is None:
             self.value, self.raw, self.stamp = raw.copy(), raw.copy(), stamp
-            return tuple(self.value), (0.0, 0.0)
+            return tuple(map(float, self.value)), (0.0, 0.0)
         dt = max(1e-6, stamp-self.stamp)
         derivative = (raw-self.raw)/dt
         a = self.alpha(dt, self.derivative_cutoff)

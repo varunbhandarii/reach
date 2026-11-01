@@ -2,6 +2,7 @@
 
 import math
 import sys
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -71,6 +72,8 @@ class Tone:
                        for name, buffer in make_earcons(fs).items()}
         self.earcon = None
         self.position = 0
+        self.speech = None
+        self.speech_position = 0
         self.base_gain = gain
         noise = np.random.default_rng(7).standard_normal(round(fs))
         spectrum = np.fft.rfft(noise)
@@ -89,50 +92,85 @@ class Tone:
                                 .008 if ducked else .125])
                 self._coefficients[lost, ducked] = np.exp(-self._ramps[:, None]/(self.fs*tau))
 
+        self._target = np.zeros(7)
+        self._controls = np.empty((blocksize, 7))
+        self._work = [np.empty(blocksize) for _ in range(9)]
+
     def trigger(self, name):
         self.earcon, self.position = self.earcons[name], 0
 
     def render(self, out, cue, ducked=False, lost=False):
         frames = len(out)
-        samples = self._ramps if frames == self.blocksize else np.arange(1, frames+1)
-        cue = cue or CueParams(0, math.exp(self.current[1]), 4, False, 0, 0)
-        target = np.array([cue.pan, math.log(cue.freq_hz), cue.pulse_hz,
-                           0 if lost else cue.gain, float(cue.continuous), cue.noise,
-                           10**(-16/20) if ducked else 1.0])
-        # pitch 25 ms; pan/gain 8 ms; lost 30 ms; duck release 125 ms.
-        coefficient = self._coefficients[bool(lost), bool(ducked)]
-        if frames != self.blocksize:
-            tau = np.array([.008, .025, .008, .030 if lost else .008, .008, .008,
-                            .008 if ducked else .125])
-            coefficient = np.exp(-samples[:, None]/(self.fs*tau))
-        controls = target + (self.current-target) * coefficient
-        self.current = controls[-1].copy()
-        pan, log_freq, pulse, gain, continuous, noise_gain, duck = controls.T
-        angles = self.phase + np.cumsum(2*np.pi*np.exp(log_freq)/self.fs)
-        pulses = self.pulse_phase + np.cumsum(2*np.pi*pulse/self.fs)
-        self.phase, self.pulse_phase = float(angles[-1] % (2*np.pi)), float(pulses[-1] % (2*np.pi))
+        if not 0 < frames <= self.blocksize:
+            raise ValueError('Unexpected audio block size')
+        ducked = bool(ducked or self.speech is not None)
+        target = self._target
+        target[0] = cue.pan if cue else 0
+        target[1] = math.log(cue.freq_hz) if cue else self.current[1]
+        target[2] = cue.pulse_hz if cue else 4
+        target[3] = cue.gain if cue and not lost else 0
+        target[4] = float(cue.continuous) if cue else 0
+        target[5] = cue.noise if cue else 0
+        target[6] = 10**(-16/20) if ducked else 1
+        controls = self._controls[:frames]
+        coefficients = self._coefficients[bool(lost), ducked][:frames]
+        for column in range(7):
+            value = controls[:, column]
+            np.subtract(self.current[column], target[column], out=value)
+            np.multiply(value, coefficients[:, column], out=value)
+            np.add(value, target[column], out=value)
+            self.current[column] = value[-1]
+        freq, angles, pulses, envelope, mono, temp, theta, left, right = (v[:frames] for v in self._work)
+        np.exp(controls[:, 1], out=freq)
+        np.multiply(freq, 2*np.pi/self.fs, out=freq)
+        np.cumsum(freq, out=angles)
+        np.add(angles, self.phase, out=angles)
+        self.phase = float(angles[-1] % (2*np.pi))
+        np.sin(angles, out=mono)
+        np.multiply(controls[:, 2], 2*np.pi/self.fs, out=pulses)
+        np.cumsum(pulses, out=pulses)
+        np.add(pulses, self.pulse_phase, out=pulses)
+        self.pulse_phase = float(pulses[-1] % (2*np.pi))
+        np.cos(pulses, out=envelope)
+        np.multiply(envelope, -.5, out=envelope)
+        np.add(envelope, .5, out=envelope)
+        np.subtract(1, controls[:, 4], out=temp)
+        np.multiply(temp, envelope, out=envelope)
+        np.add(envelope, controls[:, 4], out=envelope)
+        np.multiply(mono, envelope, out=mono)
         noise = self.noise[self.noise_pos:self.noise_pos+frames]
-        self.noise_pos = int((self.noise_pos + frames) % self._noise_period)
-        envelope = continuous + (1-continuous) * (.5-.5*np.cos(pulses))
-        mono = gain * duck * (envelope*np.sin(angles) + noise*noise_gain)
-        active = self.earcon is not None
-        if active:
-            mono *= .5
-        theta = (pan+1)*np.pi/4
-        out[:, 0] = mono*np.cos(theta)
-        out[:, 1] = mono*np.sin(theta)
-        if active:
+        self.noise_pos = int((self.noise_pos+frames) % self._noise_period)
+        np.multiply(noise, controls[:, 5], out=temp)
+        np.add(mono, temp, out=mono)
+        np.multiply(mono, controls[:, 3], out=mono)
+        np.multiply(mono, controls[:, 6], out=mono)
+        if self.earcon is not None:
+            np.multiply(mono, .5, out=mono)
+        np.add(controls[:, 0], 1, out=theta)
+        np.multiply(theta, np.pi/4, out=theta)
+        np.cos(theta, out=left)
+        np.sin(theta, out=right)
+        np.multiply(mono, left, out=out[:, 0])
+        np.multiply(mono, right, out=out[:, 1])
+        if self.earcon is not None:
             count = min(frames, len(self.earcon)-self.position)
-            out[:count] += self.earcon[self.position:self.position+count]
+            np.add(out[:count], self.earcon[self.position:self.position+count], out=out[:count])
             self.position += count
             if self.position >= len(self.earcon):
                 self.earcon = None
+        if self.speech is not None:
+            count = min(frames, len(self.speech)-self.speech_position)
+            np.add(out[:count], self.speech[self.speech_position:self.speech_position+count], out=out[:count])
+            self.speech_position += count
+            if self.speech_position >= len(self.speech):
+                self.speech = None
         np.clip(out, -1, 1, out=out)
 
 
 class CueEngine:
     def __init__(self, cfg, *, stream_factory=None):
         self.cfg = cfg.get("audio", {})
+        self._speech_gain = float(cfg.get('tts', {}).get('gain', .5))
         self._stream_factory = stream_factory or sd.OutputStream
         self.cue = None
         self.ducked = self.running = False
@@ -144,6 +182,47 @@ class CueEngine:
         self._error = None
         self._lost = False
         self._device = None
+        self._speech_command = (0, None, None)
+        self._speech_seen = 0
+        self._speech_id = None
+        self._speech_events = [[None, None, 0.0] for _ in range(64)]
+        self._speech_write = self._speech_read = 0
+        self._speech_event_drops = 0
+        self._muted = False
+
+    @property
+    def sample_rate(self):
+        return self._device['samplerate'] if self._device else 48000
+
+    def speak(self, samples, ident):
+        mono = np.asarray(samples, np.float32).reshape(-1)
+        if not len(mono) or not np.isfinite(mono).all():
+            raise ValueError('Speech samples must be finite and nonempty')
+        stereo = np.repeat((mono*self._speech_gain)[:, None], 2, axis=1)
+        np.clip(stereo, -1, 1, out=stereo)
+        stereo.setflags(write=False)
+        self._speech_command = (self._speech_command[0]+1, stereo, ident)
+
+    def cancel_speech(self):
+        self._speech_command = (self._speech_command[0]+1, None, None)
+
+    def set_muted(self, value):
+        self._muted = bool(value)
+
+    def _speech_event(self, event, ident, stamp):
+        if self._speech_write-self._speech_read >= len(self._speech_events):
+            self._speech_read += 1
+            self._speech_event_drops += 1
+        row = self._speech_events[self._speech_write % len(self._speech_events)]
+        row[0], row[1], row[2] = event, ident, stamp
+        self._speech_write += 1
+
+    def poll_speech_events(self):
+        result = []
+        while self._speech_read < self._speech_write:
+            result.append(tuple(self._speech_events[self._speech_read % len(self._speech_events)]))
+            self._speech_read += 1
+        return result
 
     def start(self):
         if self.running:
@@ -190,12 +269,26 @@ class CueEngine:
         try:
             if status.output_underflow:
                 self._underflows += 1
+            speech = self._speech_command
+            if speech[0] != self._speech_seen:
+                if self._speech_id is not None:
+                    self._speech_event('cancel', self._speech_id, time.perf_counter())
+                self._tone.speech, self._tone.speech_position = speech[1], 0
+                self._speech_id = speech[2]
+                self._speech_seen = speech[0]
+                if self._speech_id is not None:
+                    self._speech_event('start', self._speech_id, time.perf_counter())
             command = self._command
             if command[0] != self._seen_command:
                 self._tone.trigger(command[1])
                 self._seen_command = command[0]
             cue = self.cue
             self._tone.render(outdata, cue, self.ducked, self._lost)
+            if self._speech_id is not None and self._tone.speech is None:
+                self._speech_event('end', self._speech_id, time.perf_counter())
+                self._speech_id = None
+            if self._muted:
+                outdata.fill(0)
         except Exception:
             outdata.fill(0)
             self._callback_errors += 1
@@ -206,9 +299,11 @@ class CueEngine:
                 "cpu_load": float(self._stream.cpu_load) if self._stream else 0.0,
                 "reported_output_latency_ms": float(self._stream.latency)*1000 if self._stream else None,
                 "ducked": self.ducked, "earcon": self.last_earcon, "device": self._device,
+                "speech_active": self._speech_id is not None, "speech_event_drops": self._speech_event_drops,
                 "error": self._error, "active": bool(self._stream.active) if self._stream else False}
 
     def stop(self):
+        self.cancel_speech()
         self.cue = None
         self.running = False
         if self._stream is not None:

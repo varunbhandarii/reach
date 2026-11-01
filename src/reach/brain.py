@@ -117,6 +117,8 @@ class Brain:
             elif command.kind=='no' and self.state=='SEARCHING' and now-self.entered<=self._number('veto_s',1.2)+1e-9:
                 effects.append(Effect('cancel_speech'));self._clear(now,effects,'veto')
                 self._speak(effects,'Cancelled.','cancelled',2)
+            elif command.kind in ('yes','no'):
+                self._speak(effects,f'I heard {command.kind}.',f'{command.kind}_ack',0)
             elif command.kind=='repeat' and self._last_spoken:
                 text,key,priority=self._last_spoken
                 self._speak(effects,text,key,priority)
