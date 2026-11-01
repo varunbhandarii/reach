@@ -341,7 +341,7 @@ class Perception:
             if selected_pair not in retained: retained[-1]=selected_pair
             tie=float(self.cfg.get('sam',{}).get('tie_margin',.15))
             scores=sorted([confidence(pair) for pair in retained],reverse=True)
-            self._ambiguous=len(scores)>1 and scores[0]-scores[1]<=tie
+            self._ambiguous=len(scores)>1 and scores[0]-scores[1]<=tie+1e-9
             get_image=getattr(self.camera,'get',None)
             source_image=get_image(job['frame'].id) if callable(get_image) else None
             if self.cfg.get('motion',{}).get('appearance_guard',True) and source_image is not None:
@@ -380,7 +380,7 @@ class Perception:
             self._published[self.tracker.frame.id]=replace(current,mask_rle=None)
             while len(self._published)>90: self._published.popitem(last=False)
         scores=sorted((item.conf or 0 for item in self._instances),reverse=True)
-        self._ambiguous=len(scores)>1 and scores[0]-scores[1]<=float(self.cfg.get('sam',{}).get('tie_margin',.15))
+        self._ambiguous=len(scores)>1 and scores[0]-scores[1]<=float(self.cfg.get('sam',{}).get('tie_margin',.15))+1e-9
         chosen=next((i for i,item in enumerate(self._instances) if item.sam_id==self._selected_id),None)
         if current is None or self.tracker.stale or chosen is None or self._state in ('IDLE','STOPPED'):
             self._target=None
