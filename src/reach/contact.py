@@ -1,7 +1,7 @@
 """Deterministic box, relative-motion and optional mask contact heuristic."""
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import numpy as np
 from .controller import target_center
@@ -36,6 +36,7 @@ class ContactRule:
         self._fired = False
         self._last_time = None
         self._state = ContactState()
+        self._mask_key = self._mask_source = self._mask_raster = None
 
     def update(self, now, hand, target, mask=None):
         if not math.isfinite(now) or (self._last_time is not None and now < self._last_time):
@@ -78,10 +79,18 @@ class ContactRule:
         instance = target.instances[target.chosen]
         rle = mask if mask is not None else instance.mask_rle
         if rle is not None and target.age_ms <= 2000:
-            raster = decode_rle(rle) if isinstance(rle, dict) else np.asarray(rle)
-            if raster.shape != (height,width):
-                raise ValueError('contact mask must be box-local')
-            canvas = hand_mask((max(y1,1),max(x1,1)), hand)[y0:y1,x0:x1]
+            key = (target.frame_id, instance.sam_id, width, height)
+            unchanged = rle is self._mask_source
+            if not unchanged and isinstance(rle,dict) and isinstance(self._mask_source,dict):
+                unchanged = rle == self._mask_source
+            if key != self._mask_key or not unchanged:
+                raster = decode_rle(rle) if isinstance(rle, dict) else np.asarray(rle)
+                if raster.shape != (height,width):
+                    raise ValueError('contact mask must be box-local')
+                self._mask_key, self._mask_source, self._mask_raster = key, rle, raster
+            raster = self._mask_raster
+            local = replace(hand,hull_px=tuple((x-x0,y-y0) for x,y in hand.hull_px))
+            canvas = hand_mask((height,width), local)
             overlap = float(np.count_nonzero((canvas!=0)&(raster!=0)))/max(1,np.count_nonzero(raster))
         qualifies = still and (overlap is None or overlap >= float(self.cfg.get('overlap_min', .1)))
         self._hold = self._hold+1 if qualifies else 0

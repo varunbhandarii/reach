@@ -158,3 +158,13 @@ def test_runner_initializes_only_remaining_trial_and_links_manifest(tmp_path):
     rows = [json.loads(line) for line in runner.log.path.read_text().splitlines()]
     assert [r['data']['index'] for r in rows if r['type']=='trial_end'] == [5]
     assert (old/'events.jsonl').read_bytes() == before
+
+
+
+def test_resume_accepts_current_contract_without_rewriting_source(tmp_path):
+    root=source_run(tmp_path/'old')
+    p=root/'manifest.json';metadata=json.loads(p.read_text());metadata['contract_version']='4'
+    p.write_text(json.dumps(metadata))
+    before=p.read_bytes()
+    assert descriptor(root)['completed_prefix']==4
+    assert p.read_bytes()==before

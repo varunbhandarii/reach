@@ -250,3 +250,15 @@ def test_real_shared_reducer_file_integration_when_available(tmp_path, monkeypat
     assert runner.run() == 0
     rows = [json.loads(line) for line in runner.log.path.read_text().splitlines()]
     assert any(r['type']=='decision' and r['data'].get('cue') for r in rows)
+
+
+
+def test_instance_effects_reach_perception_with_source_geometry():
+    from reach.types import Effect
+    calls=[]
+    runner=Runner.__new__(Runner)
+    runner.perception=NS(choose=lambda ident:calls.append(('choose',ident)),
+                         exclude=lambda frame,box:calls.append(('exclude',frame,box)))
+    runner._effects([Effect('exclude_instance',payload={'frame_id':12,'box_xyxy':[1,2,3,4]}),
+                     Effect('choose_instance',payload={'sam_id':'next'})],0)
+    assert calls==[('exclude',12,[1,2,3,4]),('choose','next')]

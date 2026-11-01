@@ -6,11 +6,12 @@ voice_online=False (or voice_offline=True) for the once-per-run voice notice.
 Effects use the existing log type/data envelope and perform no I/O here.
 """
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import math
 from .contact import ContactRule, ContactState
 from .controller import target_center, predict_tip, map_vector
 from .types import Decision, Effect
+from .session_codec import plain, replay_config
 
 
 class Brain:
@@ -31,6 +32,14 @@ class Brain:
         self._last_spoken = None
         self._last_contact = None
         self.contact_state = None
+        self._request_id = 0
+        self._pending = self._disambiguation = None
+        self._fallback_spoken = self._choice_prompted = False
+        self._mismatches = 0
+        self._ask_started = None
+        self._ask_until = None
+        self._ask_asked = False
+        self._ask_suppressed_until = 0.0
 
     def _number(self, key, default):
         return float(self.params.get(key, default))
@@ -46,7 +55,7 @@ class Brain:
         old = self.state
         if old == state and not force:
             return
-        rate = lambda s: 'IDLE' if s in ('IDLE','CONTACT','DONE') else s
+        rate = lambda s: 'IDLE' if s in ('IDLE','CONTACT','CONFIRMING','DONE') else 'GUIDING' if s=='DISAMBIGUATING' else s
         self.state, self.entered = state, now
         effects.append(Effect('log', key='state', payload={'from':old,'to':state,'reason':reason,'phrase':self.phrase}))
         if rate(old) != rate(state) or force:
@@ -59,6 +68,8 @@ class Brain:
         self.phrase = None
         self._target_missing = None
         self._search_start = None
+        self._pending = self._disambiguation = None
+        self._ask_until = self._ask_started = None
         self.contact.reset()
         effects.append(Effect('set_phrase', text=None))
 
@@ -73,6 +84,10 @@ class Brain:
         self._target_missing = None
         self._many_notice = False
         self._last_contact = None
+        self._pending = self._disambiguation = None
+        self._mismatches = 0
+        self._choice_prompted = self._ask_asked = False
+        self._ask_started = self._ask_until = None
         self.contact.reset()
         effects.append(Effect('cancel_speech'))
         effects.append(Effect('set_phrase', text=phrase))
@@ -90,16 +105,144 @@ class Brain:
         if depth=='back': return 'back toward you'
         return 'straight ahead'
 
+    def _eligible(self, target):
+        if target is None or target.chosen is None or not target.instances:
+            return ()
+        top = max((instance.conf or 0) for instance in target.instances)
+        margin = float(self.cfg.get('sam', {}).get('tie_margin', .15))
+        return tuple(instance for instance in target.instances if top-(instance.conf or 0) <= margin)
+
+    def _pick(self, target, word, hand, flipped, *, nearest=False):
+        instances = self._eligible(target) or (target.instances if target else ())
+        if not instances:
+            return None
+        center = lambda item: ((item.box_xyxy[0]+item.box_xyxy[2])/2,
+                               (item.box_xyxy[1]+item.box_xyxy[3])/2)
+        direction = -1 if flipped else 1
+        if nearest:
+            if hand and hand.present and hand.fingertip_px:
+                return min(instances, key=lambda item: math.dist(center(item), hand.fingertip_px))
+            return target.instances[target.chosen] if target.chosen is not None else instances[0]
+        if word in ('left','right'):
+            if len(instances)>1 and max(center(item)[0] for item in instances)-min(center(item)[0] for item in instances)<=1:
+                return None
+            return min(instances, key=lambda item: direction*center(item)[0]*(1 if word=='left' else -1))
+        if word in ('farther','ahead','closer'):
+            if len(instances)>1 and max(center(item)[1] for item in instances)-min(center(item)[1] for item in instances)<=1:
+                return None
+            return min(instances, key=lambda item: direction*center(item)[1]*(-1 if word=='closer' else 1))
+        if word == 'other' and len(instances)>1:
+            current = target.instances[target.chosen].sam_id if target.chosen is not None else None
+            return next((item for item in instances if item.sam_id != current), None)
+        return None
+
+    def _select(self, now, target, instance, effects, words):
+        effects.append(Effect('choose_instance', payload={'sam_id': instance.sam_id}))
+        self.contact.reset()
+        self._target_missing = None
+        self._transition(now, 'GUIDING', effects, 'instance_choice')
+        self._speak(effects, words, 'choice', 1)
+        self._disambiguation = None
+        return replace(target, chosen=next(i for i,item in enumerate(target.instances) if item.sam_id==instance.sam_id))
+
+    def _begin_confirmation(self, now, target, effects, reason='contact'):
+        selected = target.instances[target.chosen]
+        self._request_id += 1
+        self._pending = {'request_id': self._request_id, 'frame_id': target.frame_id,
+                         'phrase': self.phrase, 'target': target, 'started': now}
+        self._fallback_spoken = False
+        self._transition(now, 'CONFIRMING', effects, reason)
+        effects.append(Effect('earcon', key='contact'))
+        if self.cfg.get('spark', {}).get('enabled', True) and self.phrase and self.phrase != 'clicked point':
+            effects.append(Effect('readback', payload={'request_id': self._request_id,
+                'frame_id': target.frame_id, 'box_xyxy': selected.box_xyxy, 'phrase': self.phrase}))
+        else:
+            self._touching(effects)
+            self._finish_confirmation(now, effects, 'readback_disabled')
+
+    def _touching(self, effects):
+        if not self._fallback_spoken:
+            self._speak(effects, f"You're touching {self._name()}.", 'contact', 2)
+            self._fallback_spoken = True
+
+    def _finish_confirmation(self, now, effects, reason):
+        self._pending = None
+        self._transition(now, 'DONE', effects, reason)
+        effects.append(Effect('set_phrase', text=None))
+
+    def _readback_results(self, now, results, effects):
+        changed = False
+        for result in results:
+            pending = self._pending
+            matches = (self.state=='CONFIRMING' and pending is not None and
+                       result.request_id==pending['request_id'] and result.target_frame_id==pending['frame_id']
+                       and result.phrase==pending['phrase'])
+            elapsed = now-pending['started'] if pending else 0
+            if not matches or elapsed > float(self.cfg.get('spark',{}).get('deadline_s',6)):
+                effects.append(Effect('log', key='readback_ignore', payload={
+                    'request_id': result.request_id, 'reason': 'stale_or_unmatched'}))
+                continue
+            confidence = result.confidence
+            confident = (isinstance(confidence,(int,float)) and not isinstance(confidence,bool) and math.isfinite(confidence)
+                         and self._number('mismatch_confidence',.6) <= confidence <= 1)
+            if result.error or type(result.matches) is not bool or not confident:
+                self._touching(effects)
+                self._finish_confirmation(now, effects, 'readback_error' if result.error else 'readback_unsure')
+            elif result.matches:
+                if elapsed <= self._number('readback_wait_s',2.5) and not self._fallback_spoken:
+                    self._speak(effects, f'You have {self._name()}.', 'confirmed', 2)
+                    if result.hint and result.hint.strip():
+                        self._speak(effects, ' '.join(result.hint.split()[:6]), 'hint', 0)
+                else:
+                    self._touching(effects)
+                self._finish_confirmation(now, effects, 'readback_match')
+            else:
+                self._mismatches += 1
+                if self._mismatches >= 2:
+                    name = self._name()
+                    effects.append(Effect('cancel_speech'))
+                    self._clear(now, effects, 'repeated_mismatch')
+                    self._speak(effects, f"I can't confirm {name}.", 'unconfirmed', 2)
+                else:
+                    old = pending['target']
+                    chosen = old.instances[old.chosen]
+                    effects.append(Effect('cancel_speech'))
+                    effects.append(Effect('earcon', key='wrong'))
+                    self._speak(effects, f"That's not {self._name()}.", 'wrong_object', 2)
+                    if result.object_name and result.object_name.strip():
+                        name = ' '.join(result.object_name.split()[:3])
+                        self._speak(effects, f'It looks like a {name}.', 'object_name', 0)
+                    effects.append(Effect('exclude_instance', payload={
+                        'frame_id': pending['frame_id'], 'box_xyxy': chosen.box_xyxy}))
+                    alternatives = tuple(item for item in old.instances if item.sam_id!=chosen.sam_id)
+                    self._pending = None
+                    self._target_missing = None
+                    self.contact.reset()
+                    if alternatives:
+                        effects.append(Effect('choose_instance', payload={'sam_id': alternatives[0].sam_id}))
+                        self._transition(now, 'GUIDING', effects, 'wrong_object_alternative')
+                    else:
+                        self._search_start, self._last_prompt = now, None
+                        effects.append(Effect('set_phrase', text=self.phrase))
+                        self._transition(now, 'SEARCHING', effects, 'wrong_object_search')
+            changed = True
+        return changed
+
     def step(self, now, *, hand=None, target=None, perception_stats=None, commands=(), speaking=False,
-             frame_size=(640,480), flipped=False):
+             frame_size=(640,480), flipped=False, results=()):
         if not math.isfinite(now) or (self._last_now is not None and now < self._last_now):
             raise ValueError('session timestamps must be finite and ordered')
         if min(frame_size)<=0:
             raise ValueError('frame dimensions must be positive')
         self._last_now=now
         stats=perception_stats or {}
-        effects=[]
         commands=tuple(commands)
+        results=tuple(results)
+        observed_stats = {key: stats[key] for key in ('stale','ambiguous','voice_online','voice_offline','consecutive_errors') if key in stats}
+        snapshot = plain(dict(seq=self._seq, now=now, hand=hand, target=target, perception_stats=observed_stats,
+                              commands=commands, results=results, speaking=speaking,
+                              frame_size=frame_size, flipped=flipped))
+        effects=[Effect('log', key='brain_in', payload=snapshot)]
         # Stop dominates a queued batch so a cancelled search never reaches I/O.
         stopping=next((c for c in reversed(commands) if c.kind in ('stop','cancel','start_over')),None)
         if stopping:
@@ -117,6 +260,24 @@ class Brain:
             elif command.kind=='no' and self.state=='SEARCHING' and now-self.entered<=self._number('veto_s',1.2)+1e-9:
                 effects.append(Effect('cancel_speech'));self._clear(now,effects,'veto')
                 self._speak(effects,'Cancelled.','cancelled',2)
+            elif command.kind=='yes' and self.state=='GUIDING' and self._ask_until is not None and now<=self._ask_until and target_center(target) is not None:
+                self._ask_until = None
+                self._begin_confirmation(now, target, effects, 'user_yes')
+            elif command.kind=='no' and self._ask_until is not None:
+                self._ask_until = None
+                self._ask_suppressed_until = now+5
+                self._speak(effects,'I heard no.','no_ack',0)
+            elif command.kind=='choose' and self.state=='DISAMBIGUATING':
+                options = target if target and target.phrase==self.phrase and target_center(target) else self._disambiguation
+                instance = self._pick(options, command.phrase, hand, flipped)
+                if instance is not None:
+                    text = ('Guiding to the one on your '+command.phrase+'.' if command.phrase in ('left','right')
+                            else 'Guiding to the '+('farther' if command.phrase=='ahead' else command.phrase)+' one.')
+                    selected = self._select(now, options, instance, effects, text)
+                    if target is not None: target = selected
+                elif not self._choice_prompted:
+                    self._choice_prompted=True
+                    self._speak(effects,'Say left or right.','choose_again')
             elif command.kind in ('yes','no'):
                 self._speak(effects,f'I heard {command.kind}.',f'{command.kind}_ack',0)
             elif command.kind=='repeat' and self._last_spoken:
@@ -125,11 +286,13 @@ class Brain:
             elif command.kind=='recheck' and self.state in ('SEARCHING','GUIDING','TARGET_LOST'):
                 effects.append(Effect('force_query'));self._speak(effects,'Checking.','checking',0)
 
+        if self._readback_results(now, results, effects):
+            target = None  # Never guide using the just-rejected observation.
         center=target_center(target)
         target_ok=(center is not None and not stats.get('stale',False)
                    and target.phrase == (self.phrase or ''))
         # Mouse click targets have no phrase and no network request.
-        if center is not None and target.phrase=='' and self.state not in ('CONTACT','DONE'):
+        if center is not None and target.phrase=='' and self.state not in ('CONTACT','CONFIRMING','DONE'):
             if self.phrase != '' or self.state=='IDLE':
                 self.phrase='';self.contact.reset();self._many_notice=False
                 self._transition(now,'GUIDING',effects,'clicked_target')
@@ -141,16 +304,38 @@ class Brain:
         if state=='SEARCHING':
             elapsed=now-(self._search_start if self._search_start is not None else self.entered)
             if target_ok:
-                self._transition(now,'GUIDING',effects,'target_found')
-                effects.append(Effect('earcon',key='found'))
-                self._speak(effects,f'Found {self._name()}, {self._where(hand,center,frame_size,flipped)}.','found')
+                eligible = self._eligible(target)
+                if len(eligible)>=2:
+                    self._disambiguation=target
+                    self._choice_prompted=False
+                    self._transition(now,'DISAMBIGUATING',effects,'ambiguous_target')
+                    effects.append(Effect('earcon',key='found'))
+                    centers=[((i.box_xyxy[0]+i.box_xyxy[2])/2,(i.box_xyxy[1]+i.box_xyxy[3])/2) for i in eligible]
+                    horizontal=max(p[0] for p in centers)-min(p[0] for p in centers) >= max(p[1] for p in centers)-min(p[1] for p in centers)
+                    count='two' if len(eligible)==2 else 'three'
+                    prompt='One on your left, one on your right. Say left or right.' if horizontal else 'One ahead, one closer. Say ahead or closer.'
+                    self._speak(effects,f'I see {count} {self.phrase}s. {prompt}','disambiguate')
+                else:
+                    self._transition(now,'GUIDING',effects,'target_found')
+                    effects.append(Effect('earcon',key='found'))
+                    self._speak(effects,f'Found {self._name()}, {self._where(hand,center,frame_size,flipped)}.','found')
             elif elapsed+1e-9 >= self._number('give_up_s',20):
                 name=self._name();self._clear(now,effects,'search_timeout')
                 self._speak(effects,f"I couldn't find {name}.",'not_found')
             elif elapsed+1e-9>=self._number('search_prompt_s',4) and (self._last_prompt is None or now-self._last_prompt+1e-9>=self._number('every_s',6)):
                 self._last_prompt=now
                 self._speak(effects,f"I can't see {self._name()} yet. Move the phone slowly.",'sweep')
+        elif state=='DISAMBIGUATING':
+            if target_ok:
+                self._disambiguation=target
+            if now-self.entered+1e-9>=self._number('disambiguate_s',8):
+                options=self._disambiguation
+                instance=self._pick(options,None,hand,flipped,nearest=True)
+                if instance is not None:
+                    selected=self._select(now,options,instance,effects,'Guiding to the nearest one.')
+                    if target_ok: target=selected;center=target_center(target)
         elif state in ('GUIDING','HAND_LOST'):
+
             if not target_ok:
                 if self._target_missing is None:self._target_missing=now
                 if now-self._target_missing+1e-9>=self._number('target_lost_s',1):
@@ -177,9 +362,13 @@ class Brain:
             elif not self._target_notice and elapsed+1e-9>=self._number('target_lost_speak_s',2):
                 self._target_notice=True
                 self._speak(effects,f'Lost {self._name()}. Hold the phone still.','target_lost')
-        elif state=='CONTACT' and (not speaking or now-self.entered+1e-9>=2):
-            self._transition(now,'DONE',effects,'contact_announced')
-            effects.append(Effect('set_phrase',text=None))
+        elif state=='CONFIRMING':
+            elapsed=now-self.entered
+            if elapsed+1e-9>=float(self.cfg.get('spark',{}).get('deadline_s',6)):
+                self._touching(effects)
+                self._finish_confirmation(now,effects,'readback_timeout')
+            elif elapsed+1e-9>=self._number('readback_wait_s',2.5):
+                self._touching(effects)
         elif state=='DONE' and now-self.entered+1e-9>=1:
             self._clear(now,effects,'done')
 
@@ -202,10 +391,15 @@ class Brain:
                     **asdict(contact),'hand_frame_id':hand.frame_id,'target_frame_id':target.frame_id}))
                 self._last_contact=contact
             if contact.fired:
-                self._transition(now,'CONTACT',effects,'contact')
-                effects.append(Effect('earcon',key='contact'))
-                self._speak(effects,f"You're touching {self._name()}.",'contact',2)
+                self._begin_confirmation(now,target,effects)
             else:
+                if self.params.get('ask_touch_enabled',False) and contact.inside and not self._ask_asked and now>=self._ask_suppressed_until:
+                    if self._ask_started is None: self._ask_started=now
+                    if now-self._ask_started+1e-9>=self._number('ask_touch_s',1.5):
+                        self._ask_asked=True;self._ask_until=now+5
+                        self._speak(effects,'Are you touching it?','ask_touch')
+                elif not contact.inside:
+                    self._ask_started=None
                 point=predict_tip(hand.fingertip_px,hand.velocity_px_s,center,float(self.params.get('prediction',self.cfg.get('prediction',.5))))
                 dx,dy,distance,cue=map_vector(point,center,*frame_size,flipped=flipped,gain=float(self.cfg.get('audio',{}).get('gain',.2)))
                 return self._decision(now,hand,target,cue,effects,(dx,dy,distance))
@@ -220,5 +414,8 @@ class Brain:
         earcon=next((e.key for e in reversed(effects) if e.kind=='earcon'),None)
         result=Decision(self._seq,now,self.state,*vector,cue,speech,earcon,
                         hand.frame_id if hand else None,target.frame_id if target else None)
+        effects=[replace(effect,payload=plain(effect.payload)) if effect.payload is not None and effect.key!='brain_in' else effect for effect in effects]
+        output=plain({'seq':result.seq,'decision':result,'effects':effects[1:]})
+        effects.append(Effect('log',key='brain_out',payload=output))
         self._seq+=1
         return result,effects
