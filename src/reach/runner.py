@@ -372,9 +372,9 @@ class Runner:
                 "audio_measured": self.audio.running, "error": self._fatal,
                 "trials": self._trial.results if self._trial else []}
 
-    def _excluded_boxes(self):
+    def _excluded_boxes(self,stats=None):
         # The perception owner can publish exclusions in current-frame coordinates.
-        stats = self.perception.stats()
+        stats = self.perception.stats() if stats is None else stats
         if 'excluded_boxes' in stats:
             return [{'box_xyxy':box} if not isinstance(box,dict) else box for box in stats['excluded_boxes']]
         tracker = getattr(self.perception,'tracker',None)
@@ -482,11 +482,13 @@ class Runner:
                     last_metrics = now
                 if (not self.args.headless or self._overlay_recorder) and now-last_draw >= 1/30:
                     stats = {**camera, **self.perception.stats(), **(metrics["hand"] if metrics else {})}
-                    stats.update(voice=self.voice.stats() if self.voice else {'enabled': False},
+                    voice_status=self.voice.stats() if self.voice else {'enabled':False}
+                    readback_status=self.readback.stats() if self.readback else {'enabled':False}
+                    stats.update(voice=voice_status,
                                  speech=self.speaker.stats(), contact=self._contact_signals,
-                                 readback=self.readback.stats() if self.readback else {'enabled':False},
-                                 excluded_instances=self._excluded_boxes(),
-                                 estimated_cost_usd=self._metrics()['cost']['estimated_usd'])
+                                 readback=readback_status,
+                                 excluded_instances=self._excluded_boxes(stats),
+                                 estimated_cost_usd=estimate(self.cfg,stats,voice_status,readback_status)['estimated_usd'])
                     canvas = draw_overlay(image, self._latest_hand, target, self._decision, stats,
                         muted=self._muted, trial=self._trial.lines() if self._trial else None, stale_box=self._last_box)
                     if self._overlay_recorder:
