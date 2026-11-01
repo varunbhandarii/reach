@@ -111,6 +111,9 @@ class ReadBackClient:
             'text':{'format':{'type':'json_schema','name':'readback','strict':True,'schema':SCHEMA}}}
 
     async def _call(self, jpeg, phrase, *, count_tokens=False):
+        return await asyncio.wait_for(self._perform(jpeg,phrase,count_tokens=count_tokens),self.deadline)
+
+    async def _perform(self, jpeg, phrase, *, count_tokens=False):
         from openai import AsyncOpenAI
         from dotenv import dotenv_values
         key = self._key or os.environ.get('MODEL_API_KEY') or dotenv_values(PROJECT_ROOT/'.env').get('MODEL_API_KEY')
@@ -121,10 +124,10 @@ class ReadBackClient:
             body = self.body(jpeg,phrase)
             if count_tokens:
                 # The token-count endpoint accepts the same model/input description.
-                response = await asyncio.wait_for(client.post('/responses/input_tokens',cast_to=dict,
-                    body={k:v for k,v in body.items() if k in ('model','input','text','reasoning')}),self.deadline)
+                response = await client.post('/responses/input_tokens',cast_to=dict,
+                    body={k:v for k,v in body.items() if k in ('model','input','text','reasoning')})
                 return response
-            return await asyncio.wait_for(client.responses.create(**body),self.deadline)
+            return await client.responses.create(**body)
 
     def count_tokens(self, jpeg, phrase):
         return asyncio.run(self._call(jpeg,phrase,count_tokens=True))
