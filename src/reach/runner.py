@@ -157,6 +157,10 @@ class Runner:
                     self._pending_click = None
                 else:
                     self.perception.force_query()
+            elif effect.kind == 'choose_instance':
+                self.perception.choose(effect.payload['sam_id'])
+            elif effect.kind == 'exclude_instance':
+                self.perception.exclude(effect.payload['frame_id'],effect.payload['box_xyxy'])
             elif effect.kind == 'perception_state':
                 self.perception.set_state(effect.key)
             elif effect.kind == 'log':

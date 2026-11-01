@@ -27,6 +27,9 @@ for effect in effects:
 | force_query | `perception.force_query()` |
 | perception_state | `perception.set_state(effect.key)` |
 | log | `log.emit(effect.key, effect.payload)`; payload is flat event data |
+| choose_instance | `perception.choose(effect.payload["sam_id"])` |
+| exclude_instance | `perception.exclude(effect.payload["frame_id"], effect.payload["box_xyxy"])` |
+| readback | Pass the source-frame crop and request identity to the read-back worker |
 
 Keys, scripted trials and voice post `Command` values through the same queue.
 Use `grammar.parse(text, objects, vocabulary, t_mono=now, turn_id=turn,
@@ -81,3 +84,5 @@ The integrated live runner, voice client and speech mixer consume these
 interfaces. Startup waits for the speech cache before opening the microphone.
 Libraries and offline replay are usable independently; live voice/contact
 success and endurance are measured separately.
+
+Confirmation, multi-instance semantics and the exact replay record are described in [confirmation.md](confirmation.md).
