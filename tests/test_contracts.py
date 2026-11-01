@@ -14,6 +14,7 @@ from reach.types import (
     HandObs,
     Instance,
     TargetObs,
+    ReadBack,
 )
 
 
@@ -35,6 +36,11 @@ def _restore(value, original):
 @pytest.mark.parametrize(
     "sample",
     [
+        ReadBack(7, 3, "wallet", True, "wallet", "", .9, 123.0),
+        ReadBack(8, 4, "pen", None, None, None, None, 6000.0, "timeout"),
+        Effect("readback", payload={"request_id": 7, "frame_id": 3, "box_xyxy": [1,2,3,4], "phrase": "wallet"}),
+        Effect("choose_instance", payload={"sam_id": "second"}),
+        Effect("exclude_instance", payload={"frame_id": 3, "box_xyxy": [1,2,3,4]}),
         Effect("speak", "Looking for the wallet.", "looking", 1),
         Frame(3, 1.25, 1_777_000_000.5, 640, 480, "abc123", "iphone_continuity"),
         HandObs(3, True, (12.5, 22.5), (15.0, 24.0), ((1.0, 2.0), (3.0, 4.0)), (4.0, -2.0), 0.98),
@@ -44,7 +50,7 @@ def _restore(value, original):
         CueParams(0.5, 440.0, 4.0, False, 0.2, 0.3),
         Decision(11, 3.5, "GUIDING", 0.1, -0.2, 0.3, CueParams(0.5, 440.0, 4.0, False, 0.2, 0.3), None, "found"),
     ],
-    ids=["effect", "frame", "hand-observation", "instance", "target-observation", "command", "cue", "decision"],
+    ids=["readback", "readback-error", "readback-effect", "choose-effect", "exclude-effect", "effect", "frame", "hand-observation", "instance", "target-observation", "command", "cue", "decision"],
 )
 def test_contract_round_trips_through_json(sample):
     encoded = json.dumps(asdict(sample), ensure_ascii=False)
