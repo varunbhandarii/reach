@@ -59,6 +59,8 @@ class TargetTracker:
         self.history = OrderedDict()
         self.frame = self.gray = self.mask = self.image = None
         self._seed = self._seed_id = self._kcf = None
+        self._revision = 0
+        self._current_key = self._current_value = None
         self.stale = True
         self._target_matrix = np.eye(3)
         self.roll_total = 0.0
@@ -164,9 +166,10 @@ class TargetTracker:
         return None if matrix is None else transform_instance(instance, matrix, self.frame.width, self.frame.height)
 
     def reseed(self, frame_id, instance):
-        mapped = self.map_instance(frame_id, instance)
+        mapped = self.map_instance(frame_id, replace(instance, mask_rle=None))
         if mapped is None:
             return False
+        self._revision += 1
         self._seed, self._seed_id = instance, frame_id
         self._target_matrix = self.compose(frame_id)
         self.stale = False
@@ -180,13 +183,19 @@ class TargetTracker:
         return True
 
     def clear(self):
+        self._revision += 1
+        self._current_key = self._current_value = None
         self._seed = self._seed_id = self._kcf = None
         self.stale = True
 
     def current(self):
         if self._seed is None or self.stale:
             return None
+        key = (self.frame.id,self._revision)
+        if key == self._current_key:
+            return self._current_value
         mapped = transform_instance(self._seed, self._target_matrix, self.frame.width, self.frame.height)
+        self._current_key,self._current_value = key,mapped
         if mapped is None:
             self.stale = True
             return None

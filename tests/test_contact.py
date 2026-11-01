@@ -57,3 +57,27 @@ def test_reset_retains_refractory_and_absence_resets_dwell():
     rule.reset();rule.update(4,hand(1),target())
     rule.update(4.1,replace(hand(2),present=False),target())
     assert not rule.update(4.2,hand(3),target()).still
+
+
+
+def test_mask_decodes_once_per_target_update_and_rechecks_changed_mask(monkeypatch):
+    from dataclasses import replace
+    from reach.masks import encode_rle,decode_rle
+    import numpy as np
+    from reach.types import HandObs,Instance,TargetObs
+    calls=[]
+    def decode(value): calls.append(True);return decode_rle(value)
+    monkeypatch.setattr('reach.contact.decode_rle',decode)
+    rule=ContactRule()
+    mask=encode_rle(np.ones((100,100),np.uint8))
+    t=TargetObs(1,'wallet',(Instance('a',(100,100,200,200),.9,mask),),0,'sam',0)
+    for i in range(15):
+        h=HandObs(i,True,(150,150),None,((100,100),(200,100),(200,200),(100,200)),(0,0),1)
+        assert rule.update(i*.03,h,t).overlap==1
+    assert len(calls)==1
+    t=replace(t,frame_id=2)
+    rule.update(.5,replace(h,frame_id=20),t)
+    assert len(calls)==2
+    t=replace(t,instances=(replace(t.instances[0],mask_rle=encode_rle(np.zeros((100,100),np.uint8))),))
+    assert rule.update(.6,replace(h,frame_id=21),t).overlap==0
+    assert len(calls)==3

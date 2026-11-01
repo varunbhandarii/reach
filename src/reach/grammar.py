@@ -51,9 +51,9 @@ def parse(transcript, objects=DEFAULT_OBJECTS, vocabulary=(), *, t_mono=0.0, tur
     command = lambda kind, phrase=None: Command(kind, phrase, transcript, turn_id, t_mono, source)
     if text in EXACT:
         return command(EXACT[text])
-    choice = re.fullmatch(r'(?:the )?(left|right|closer|farther|other)(?: one)?', text)
+    choice = re.fullmatch(r'(?:the )?(left|right|closer|farther|ahead|other)(?: one)?', text)
     if choice:
-        return command('choose', choice[1])
+        return command('choose', 'farther' if choice[1]=='ahead' else choice[1])
     find = re.fullmatch(r'(?:find|look for|where is|locate|search for|show me) (.+)', text)
     known = tuple(normalize(word) for word in objects)
     vocab = sorted(set(known) | {normalize(word) for word in vocabulary})

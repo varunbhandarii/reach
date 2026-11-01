@@ -1,7 +1,8 @@
 """Camera-motion perception with a single blocking segmentation worker."""
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from hashlib import sha256
+from collections import OrderedDict
 import math
 import queue
 import threading
@@ -38,6 +39,14 @@ class Perception:
         self._thread = self._worker_thread = None
         self._target = self._hand = None
         self._mode = self._phrase = self._point = None
+        self._instances = ()
+        self._instances_frame = None
+        self._raw_instances = {}
+        self._selected_id = None
+        self._exclusions = []
+        self._published = OrderedDict()
+        self._paused_targets = {}
+        self._query_epoch = 0
         self._generation = 0
         self._seen_generation = -1
         self._state = "IDLE"
@@ -95,6 +104,8 @@ class Perception:
                     and self._state not in ("IDLE", "STOPPED") and not self._fatal):
                 self.scheduler.force()
                 return
+            if phrase != self._phrase or phrase is None:
+                self._exclusions.clear()
             self._generation += 1
             self._mode, self._phrase, self._point = ("phrase" if phrase else None), phrase, None
             self._target = None
@@ -113,10 +124,79 @@ class Perception:
     def set_state(self, state: str):
         with self._lock:
             self._externally_driven = True
-            self._state = 'IDLE' if state.upper() in ('CONTACT','DONE') else state.upper()
-            if self._state in ("IDLE", "STOPPED"):
-                self._generation += 1
+            state=state.upper()
+            self._state = ('IDLE' if state in ('CONTACT','CONFIRMING','DONE') else
+                           'GUIDING' if state=='DISAMBIGUATING' else state)
+            if self._state in ('IDLE','STOPPED'):
+                if self._target is not None:
+                    self._paused_targets = dict(self._published)
+                self._query_epoch += 1
                 self._target = None
+            elif self.tracker.frame is not None:
+                self._publish()
+
+    def choose(self, sam_id):
+        """Switch the lock using fresh geometry; never synthesize an old mask."""
+        with self._lock:
+            self._advance_geometry()
+            item=next((item for item in self._instances if item.sam_id==sam_id),None)
+            if item is None or self.tracker.frame is None:
+                return False
+            original=self._raw_instances.get(sam_id)
+            if original is not None and self.tracker.compose(original[0]) is not None:
+                ok=self.tracker.reseed(original[0],original[1])
+            else:
+                ok=self.tracker.reseed(self.tracker.frame.id,replace(item,mask_rle=None))
+            if not ok:
+                return False
+            self._selected_id=sam_id
+            self.scheduler.force()
+            self._publish()
+            return True
+
+    def exclude(self, frame_id, box_xyxy):
+        with self._lock:
+            if self.tracker.frame is None:
+                return False
+            self._advance_geometry()
+            source=Instance('excluded',tuple(box_xyxy),None,None)
+            mapped=self.tracker.map_instance(frame_id,source)
+            current=self.tracker.current()
+            paused=self._paused_targets.get(frame_id)
+            # Confirmation can outlive the short transform history. The paused
+            # selected lock still accumulates camera motion without new queries.
+            if mapped is None and paused is not None and current is not None:
+                if paused.sam_id==current.sam_id and box_iou(paused.box_xyxy,source.box_xyxy)>=.3:
+                    mapped=replace(current,sam_id='excluded',mask_rle=None)
+            if mapped is None:
+                self._emit('exclude_drop',{'frame_id':frame_id,'reason':'motion_history_unavailable'})
+                self.scheduler.force()
+                return False
+            self._query_epoch += 1
+            self._exclusions.append((self.tracker.frame.id,mapped))
+            self._instances=tuple(item for item in self._instances if box_iou(item.box_xyxy,mapped.box_xyxy)<.3)
+            if current is not None and box_iou(current.box_xyxy,mapped.box_xyxy)>=.3:
+                self.tracker.clear()
+                self._selected_id=None
+            self._publish()
+            self.scheduler.force()
+            return True
+
+    def _advance_geometry(self):
+        frame=self.tracker.frame
+        if frame is None:
+            return
+        if self._instances_frame is not None and self._instances_frame!=frame.id:
+            mapped=[self.tracker.map_instance(self._instances_frame,replace(item,mask_rle=None))
+                    for item in self._instances]
+            self._instances=tuple(item for item in mapped if item is not None)
+        self._instances_frame=frame.id
+        exclusions=[]
+        for source,item in self._exclusions:
+            mapped=item if source==frame.id else self.tracker.map_instance(source,item)
+            if mapped is not None:
+                exclusions.append((frame.id,mapped))
+        self._exclusions=exclusions
 
     def force_query(self):
         """Runner's recheck key; never overrides idle or one-in-flight guards."""
@@ -138,6 +218,7 @@ class Perception:
             return {**self._metrics, **self.tracker.stats(), "ambiguous": self._ambiguous,
                     "in_flight": self._inflight is not None, "state": self._state,
                     "last_ok_age_ms": max(0,(self._clock()-self._last_ok)*1000) if self._last_ok is not None else None,
+                    "excluded_boxes": [item.box_xyxy for _,item in self._exclusions],
                     "error": self._fatal, "estimated_cost_usd": self._metrics["images_sent"]*.0025}
 
     def _emit(self, kind, data):
@@ -154,7 +235,7 @@ class Perception:
                 break
             started = self._clock()
             with self._lock:
-                cancelled = job["generation"] != self._generation or self._state in ("IDLE", "STOPPED")
+                cancelled = job["generation"] != self._generation or job.get("epoch",self._query_epoch) != self._query_epoch or self._state in ("IDLE", "STOPPED")
             if cancelled:
                 self._results.put((job, (), None, 0.0))
                 continue
@@ -223,7 +304,7 @@ class Perception:
             else:
                 self._metrics["consecutive_errors"] = 0
                 self._last_ok = self._clock()
-            invalid = (job["generation"] != self._generation or self._mode != "phrase"
+            invalid = (job["generation"] != self._generation or job.get("epoch",self._query_epoch) != self._query_epoch or self._mode != "phrase"
                        or self._state in ("IDLE", "STOPPED") or job["frame"].id <= self._last_applied
                        or self._clock()-job["submitted"] > 3
                        or self.tracker.compose(job["frame"].id) is None)
@@ -237,65 +318,95 @@ class Perception:
             if error or invalid:
                 continue
             previous = self.tracker.current()
-            candidates = [(i, self.tracker.map_instance(job["frame"].id, item)) for i, item in enumerate(instances)]
-            candidates = [(i, item) for i, item in candidates if item is not None]
+            self._advance_geometry()
+            candidates = [(i,self.tracker.map_instance(job['frame'].id,replace(item,mask_rle=None)))
+                          for i,item in enumerate(instances)]
+            candidates = [(i,item) for i,item in candidates if item is not None
+                          and not any(box_iou(item.box_xyxy,excluded.box_xyxy)>=.3 for _,excluded in self._exclusions)]
             if not candidates:
-                # No detection is not permission to retain an unconfirmed target.
                 self.tracker.clear()
-                self._target = None
-                self._metrics["instances_last"] = 0
-                if not self._externally_driven:
-                    self._state = "SEARCHING"
+                self._instances=()
+                self._raw_instances={}
+                self._selected_id=None
+                self._target=None
+                self._metrics['instances_last']=0
+                self._ambiguous=False
+                if not self._externally_driven: self._state='SEARCHING'
                 continue
-            confidence = lambda pair: pair[1].conf if pair[1].conf is not None else 0
-            ranked = sorted(candidates, key=confidence, reverse=True)
-            tie = float(self.cfg.get("sam", {}).get("tie_margin", .15))
-            self._ambiguous = len(ranked) > 1 and confidence(ranked[0])-confidence(ranked[1]) <= tie
-            if previous is not None:
-                ranked.sort(key=lambda pair: box_iou(previous.box_xyxy, pair[1].box_xyxy), reverse=True)
-            selected, mapped = ranked[0]
-            motion_cfg = self.cfg.get("motion", {})
-            get_image = getattr(self.camera, "get", None)
-            source_image = get_image(job["frame"].id) if callable(get_image) else None
-            if motion_cfg.get("appearance_guard", True) and source_image is not None:
-                distances = compare_appearance(source_image, instances[selected], self.tracker.image, mapped, self._hand)
+            confidence=lambda pair: pair[1].conf if pair[1].conf is not None else 0
+            ranked=sorted(candidates,key=confidence,reverse=True)
+            selected_pair=max(ranked,key=lambda pair:(box_iou(previous.box_xyxy,pair[1].box_xyxy),confidence(pair))) if previous else ranked[0]
+            selected,mapped=selected_pair
+            retained=ranked[:3]
+            if selected_pair not in retained: retained[-1]=selected_pair
+            tie=float(self.cfg.get('sam',{}).get('tie_margin',.15))
+            scores=sorted([confidence(pair) for pair in retained],reverse=True)
+            self._ambiguous=len(scores)>1 and scores[0]-scores[1]<=tie
+            get_image=getattr(self.camera,'get',None)
+            source_image=get_image(job['frame'].id) if callable(get_image) else None
+            if self.cfg.get('motion',{}).get('appearance_guard',True) and source_image is not None:
+                selected_mask=self.tracker.map_instance(job['frame'].id,instances[selected])
+                distances=compare_appearance(source_image,instances[selected],self.tracker.image,selected_mask,self._hand)
                 if appearance_changed(distances):
-                    self._metrics["appearance_rejections"] += 1
-                    self.tracker.clear()
-                    self._target = None
-                    if not self._externally_driven:
-                        self._state = "SEARCHING"
+                    self._metrics['appearance_rejections']+=1
+                    self.tracker.clear();self._target=None;self._instances=()
+                    if not self._externally_driven: self._state='SEARCHING'
                     self.scheduler.force()
-                    self._emit("target_reject", {"req_id": job["id"], "frame_id": self.tracker.frame.id,
-                        "source_frame_id": job["frame"].id, "reason": "appearance_changed", **distances})
+                    self._emit('target_reject',{'req_id':job['id'],'frame_id':self.tracker.frame.id,
+                        'source_frame_id':job['frame'].id,'reason':'appearance_changed',**distances})
                     continue
-            if self.tracker.reseed(job["frame"].id, instances[selected]):
-                self._last_applied = job["frame"].id
-                self._seed_time = job["frame"].t_mono
-                self._metrics["instances_last"] = len(instances)
-                if not self._externally_driven:
-                    self._state = "GUIDING"
-                self._publish("sam")
+            if self.tracker.reseed(job['frame'].id,instances[selected]):
+                self._last_applied=job['frame'].id
+                self._seed_time=job['frame'].t_mono
+                self._instances=tuple(item for _,item in retained)
+                self._instances_frame=self.tracker.frame.id
+                self._raw_instances={item.sam_id:(job['frame'].id,instances[i]) for i,item in retained}
+                self._selected_id=instances[selected].sam_id
+                self._metrics['instances_last']=len(retained)
+                if not self._externally_driven: self._state='GUIDING'
+                self._publish('sam')
 
-    def _publish(self, source="tracker"):
-        current = self.tracker.current()
-        if current is None or self.tracker.stale or self._state in ("IDLE", "STOPPED"):
-            self._target = None
+    def _publish(self, source='tracker'):
+        self._advance_geometry()
+        current=self.tracker.current()
+        if current is not None:
+            if not self._instances:
+                self._instances=(current,)
+                self._selected_id=current.sam_id
+            items=[]
+            for item in self._instances:
+                items.append(current if item.sam_id==self._selected_id else replace(item,mask_rle=None))
+            self._instances=tuple(items)
+            self._published[self.tracker.frame.id]=replace(current,mask_rle=None)
+            while len(self._published)>90: self._published.popitem(last=False)
+        scores=sorted((item.conf or 0 for item in self._instances),reverse=True)
+        self._ambiguous=len(scores)>1 and scores[0]-scores[1]<=float(self.cfg.get('sam',{}).get('tie_margin',.15))
+        chosen=next((i for i,item in enumerate(self._instances) if item.sam_id==self._selected_id),None)
+        if current is None or self.tracker.stale or chosen is None or self._state in ('IDLE','STOPPED'):
+            self._target=None
         else:
-            age = max(0, (self._clock()-self._seed_time)*1000) if self._seed_time is not None else 0
-            self._target = TargetObs(self.tracker.frame.id, self._phrase or "", (current,), 0, source, age)
-        target = self._target
-        self._emit("target", {"frame_id": self.tracker.frame.id, "source": target.source if target else "none",
-            "chosen": target.chosen if target else None, "box_xyxy": current.box_xyxy if current else None,
-            "stale": self.tracker.stale, "age_ms": target.age_ms if target else None, "ambiguous": self._ambiguous})
+            age=max(0,(self._clock()-self._seed_time)*1000) if self._seed_time is not None else 0
+            self._target=TargetObs(self.tracker.frame.id,self._phrase or '',self._instances,chosen,source,age)
+        target=self._target
+        self._emit('target',{'frame_id':self.tracker.frame.id,'source':target.source if target else 'none',
+            'chosen':target.chosen if target else None,'box_xyxy':current.box_xyxy if current else None,
+            'instances':[asdict(item) for item in target.instances] if target else [],
+            'stale':self.tracker.stale,'age_ms':target.age_ms if target else None,'ambiguous':self._ambiguous})
 
     def process(self, frame, image):
         """One frame step, also usable in deterministic file tests."""
         with self._lock:
             self.tracker.update(frame, image, self._hand)
+            self._advance_geometry()
             self._emit("motion", self.tracker.motion)
             if self._seen_generation != self._generation:
                 self.tracker.clear()
+                self._instances=()
+                self._raw_instances={}
+                self._selected_id=None
+                self._instances_frame=frame.id
+                self._published.clear()
+                self._paused_targets={}
                 self.scheduler.reset()
                 self._last_applied = -1
                 self._ambiguous = False
@@ -314,7 +425,7 @@ class Perception:
             near = False
             target, hand = self._target, self._hand
             if target and hand and hand.present and hand.fingertip_px is not None:
-                x0, y0, x1, y1 = target.instances[0].box_xyxy
+                x0, y0, x1, y1 = target.instances[target.chosen].box_xyxy
                 near = math.dist(hand.fingertip_px, ((x0+x1)/2, (y0+y1)/2)) <= 1.5*(x1-x0)
             now = self._clock()
             if not self.scheduler.should_query(self._state, target is not None, now, in_flight=self._inflight is not None, near=near):
@@ -326,7 +437,7 @@ class Perception:
                 self._emit("error", {"where": "perception", "kind": "frame_hash", "message": "stored JPEG does not match its frame"})
                 return
             job = {"id": self._req_id, "frame": frame, "jpeg": jpeg, "phrase": self._phrase,
-                   "generation": self._generation, "submitted": now}
+                   "generation": self._generation, "epoch": self._query_epoch, "submitted": now}
             self._req_id += 1
             self._inflight = job
             self._jobs.put_nowait(job)

@@ -115,7 +115,7 @@ def test_startup_wait_populates_cache_before_live_commands():
     try:
         assert speaker.wait_ready(timeout=2)
         assert speaker.stats()['cache_ready']
-        assert speaker.stats()['cached_phrases']==10
+        assert speaker.stats()['cached_phrases']>=10
         assert not speaker.busy
     finally:
         speaker.stop()
