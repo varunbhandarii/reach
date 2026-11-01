@@ -110,7 +110,7 @@ class Brain:
             return ()
         top = max((instance.conf or 0) for instance in target.instances)
         margin = float(self.cfg.get('sam', {}).get('tie_margin', .15))
-        return tuple(instance for instance in target.instances if top-(instance.conf or 0) <= margin)
+        return tuple(instance for instance in target.instances if top-(instance.conf or 0) <= margin+1e-9)
 
     def _pick(self, target, word, hand, flipped, *, nearest=False):
         instances = self._eligible(target) or (target.instances if target else ())

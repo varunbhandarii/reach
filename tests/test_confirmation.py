@@ -213,3 +213,12 @@ def test_dynamic_readback_text_cannot_overflow_speech_interface():
     b,r=confirmation()
     d,e=b.step(.3,results=[answer(r,False,object_name='x'*1000)])
     assert all(len(text)<=300 for text in spoken(e))
+
+
+
+def test_confidence_tie_boundary_is_inclusive():
+    b=Brain({'contact':{'enabled':False}})
+    b.step(0,commands=[command('find','wallet')])
+    t=target(True)
+    t=replace(t,instances=(replace(t.instances[0],conf=.75),replace(t.instances[1],conf=.6)))
+    assert b.step(.1,target=t)[0].state=='DISAMBIGUATING'
