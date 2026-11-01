@@ -86,8 +86,9 @@ def test_rate_limit_honors_retry_after_without_retry():
 
 
 def test_total_timeout_single_flight_and_sanitized_errors():
-    cancelled=[]
+    cancelled,started=[],[]
     async def handler(request):
+        started.append(True)
         try:
             await asyncio.sleep(1)
         finally:
@@ -98,7 +99,9 @@ def test_total_timeout_single_flight_and_sanitized_errors():
     assert client.request(1,b'jpeg','wallet',1)
     assert not client.request(2,b'jpeg','wallet',2)
     results=finish(client)
-    assert {r.error for r in results}=={'busy','timeout'} and cancelled
+    assert {r.error for r in results}=={'busy','timeout'}
+    # A short deadline may expire in SDK setup before reaching the transport.
+    assert not started or cancelled
     assert time.perf_counter()-start<.8
     client.stop()
 
