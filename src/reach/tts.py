@@ -103,11 +103,15 @@ class SayEngine:
 
 def phrase_texts(objects):
     texts = ['I see more than one.', 'Bring your hand into view.', 'Checking.', 'Cancelled.',
-             'Stopped.', 'Ready.', 'I heard yes.', 'I heard no.', 'Voice is offline. Use the keys.', 'Connection problem. Still trying.']
+             'Stopped.', 'Ready.', 'I heard yes.', 'I heard no.', 'Voice is offline. Use the keys.', 'Connection problem. Still trying.',
+             'One on your left, one on your right. Say left or right.', 'One ahead, one closer. Say ahead or closer.',
+             'Guiding to the one on your left.', 'Guiding to the one on your right.', 'Guiding to the nearest one.',
+             'Say left or right.', 'Are you touching it?']
     for obj in objects:
         texts.extend([f'Looking for the {obj}.', f"I can't see the {obj} yet. Move the phone slowly.",
             f"I couldn't find the {obj}.", f'Lost the {obj}. Hold the phone still.', f'I lost the {obj}.',
-            f"You're touching the {obj}."])
+            f"You're touching the {obj}.",f'You have the {obj}.',f"That's not the {obj}.",
+            f"I can't confirm the {obj}.",f'I see two {obj}.'])
         texts.extend(f'Found the {obj}, {where}.' for where in
             ('to your left', 'to your right', 'straight ahead', 'ahead on your left', 'ahead on your right',
              'back toward you', 'back on your left', 'back on your right'))

@@ -80,8 +80,15 @@ def summarize(run_dir):
         if state:
             state_times[state] = state_times.get(state, 0)+max(0, min(end, end_window)-max(event['t_mono'], start_window))
     summary.update(
+        readback_latency_ms=percentiles([r['data'].get('latency_ms') for r in events if r['type']=='readback_resp' and r['data'].get('status')=='ok' and not r['data'].get('cached')]),
+        readback_matches=sum(r['type']=='readback_resp' and r['data'].get('matches') is True for r in events),
+        readback_mismatches=sum(r['type']=='readback_resp' and r['data'].get('matches') is False for r in events),
+        readback_errors=sum(r['type']=='readback_resp' and bool(r['data'].get('error')) for r in events),
+        readback=saved.get('readback'),cost=saved.get('cost'),recording=saved.get('recording'),
         voice=saved.get('voice'), speech=saved.get('speech'),
         voice_latency_ms=percentiles([r.get('latency_ms') for r in voice_turns if r.get('mode') == 'ENDPOINTING']),
+        voice_local_latency_ms=percentiles([r.get('latency_local_ms') for r in voice_turns if r.get('mode') == 'ENDPOINTING' and r.get('local_latency_valid')]),
+        voice_local_latency_note='Capture-clocked energy endpoint estimate; 20 ms subframes and 200 ms hangover. Not phoneme-aligned ground truth.',
         ptt_latency_ms=percentiles([r.get('latency_ms') for r in voice_turns if r.get('mode') == 'PUSH_TO_TALK']),
         speech_first_audio_ms=percentiles([r.get('first_audio_ms') for r in speech if r.get('event') == 'start']),
         cached_speech_first_audio_ms=percentiles([r.get('first_audio_ms') for r in speech if r.get('event') == 'start' and r.get('id') in cached_ids]),

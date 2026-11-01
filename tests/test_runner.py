@@ -11,7 +11,7 @@ from reach.cli import parser, configure
 from reach.runner import Runner
 from reach.session_report import summarize
 from reach.trials import Trials
-from reach.types import HandObs, Frame, Decision
+from reach.types import HandObs, Frame, Decision, Effect
 from reach.controller import decide
 
 
@@ -23,7 +23,7 @@ class FakeBrain:
     def step(self, now, *, hand, target, perception_stats, commands, speaking, frame_size, flipped):
         effects = []
         def effect(kind, text=None, key=None, payload=None):
-            return NS(kind=kind, text=text, key=key, payload=payload, priority=0)
+            return Effect(kind=kind, text=text, key=key, payload=payload, priority=0)
         for command in commands:
             if command.kind == 'find':
                 self.phrase = command.phrase
