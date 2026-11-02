@@ -112,6 +112,17 @@ def phrase_texts(objects):
             ('to your left', 'to your right', 'straight ahead', 'ahead on your left', 'ahead on your right',
              'back toward you', 'back on your left', 'back on your right'))
         texts.extend(f'Trial {i}. Find the {obj}.' for i in range(1, 6))
+    texts.extend(['One on your left, one on your right. Say left or right.',
+                  'One ahead, one closer. Say ahead or closer.', 'Guiding to the nearest one.',
+                  'Say left or right.', 'Are you touching it?'])
+    texts.extend(f'Guiding to the one on your {side}.' for side in ('left','right'))
+    texts.extend(f'Guiding to the {word} one.' for word in ('closer','farther','other'))
+    for obj in objects:
+        texts.extend([f'You have the {obj}.', f"That's not the {obj}.", f"I can't confirm the {obj}."])
+        for count in ('two','three'):
+            for prompt in ('One on your left, one on your right. Say left or right.',
+                           'One ahead, one closer. Say ahead or closer.'):
+                texts.append(f'I see {count} {obj}s. {prompt}')
     return list(dict.fromkeys(texts))
 
 

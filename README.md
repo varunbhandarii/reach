@@ -151,3 +151,6 @@ are described in [session integration](docs/session-integration.md).
 `reach replay-contact RUN_DIR --frames` inspects saved box/contact geometry
 without network or device access. Live voice and mixed speech need the runner
 integration to consume these interfaces.
+
+
+Controller confirmation, spatial selection and deterministic offline replay are documented in [the integration reference](docs/confirmation.md). `reach replay RUN_DIR` verifies recorded inputs/outputs without a camera or API; `--strip OUTPUT_DIR` writes a fresh events-only copy with canonical command text. The live read-back worker and recording adapter are separate integration components.

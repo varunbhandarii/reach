@@ -28,6 +28,7 @@ from .voice import VoiceClient
 from .tts import Speaker, SilentSpeaker
 from .session_io import CommandInbox, TrialActions, make_command
 from .trial_resume import load_trial_resume, saved_trial_prefix
+from .session_codec import replay_config
 
 
 class Runner:
@@ -89,6 +90,7 @@ class Runner:
         config_hash = sha256(json.dumps(self.cfg, sort_keys=True).encode()).hexdigest()
         return {"app_commit": result.stdout.strip() if result.returncode == 0 else "unknown",
                 "config_hash": config_hash, "contract_version": CONTRACT_VERSION,
+                "config": replay_config(self.cfg),
                 "models": {"hand": "hand_landmarker.task", "sam": self.cfg.get("sam", {}).get("model")},
                 "mount": self.args.mount, "os": platform.platform(), "source": self.camera.source,
                 "prediction": self.args.predict, "muted": self._muted,
@@ -155,6 +157,10 @@ class Runner:
                     self._pending_click = None
                 else:
                     self.perception.force_query()
+            elif effect.kind == 'choose_instance':
+                self.perception.choose(effect.payload['sam_id'])
+            elif effect.kind == 'exclude_instance':
+                self.perception.exclude(effect.payload['frame_id'],effect.payload['box_xyxy'])
             elif effect.kind == 'perception_state':
                 self.perception.set_state(effect.key)
             elif effect.kind == 'log':

@@ -77,14 +77,14 @@ def test_selection_preserves_overlap_and_marks_ambiguity():
     instances = (Instance('a', (100, 200, 150, 250), .95, None), Instance('b', (300, 200, 350, 250), .9, None))
     p._results.put((job, instances, None, 100))
     p.process(c.frame(1), c.image)
-    assert p.latest().instances[0].sam_id == 'a'
+    assert p.latest().instances[p.latest().chosen].sam_id == 'a'
     assert p.stats()['ambiguous']
     # Refresh confidence favours b, but overlap keeps a.
     job = {**job, 'frame': c.frame(1), 'submitted': time.perf_counter()}
     p._inflight = job
     p._results.put((job, (replace(instances[0], conf=.8), replace(instances[1], conf=.99)), None, 100))
     p.process(c.frame(2), c.image)
-    assert p.latest().instances[0].sam_id == 'a'
+    assert p.latest().instances[p.latest().chosen].sam_id == 'a'
 
 
 def test_deadline_drop_even_with_valid_history():
@@ -244,3 +244,66 @@ def test_consecutive_error_count_resets_on_success():
     assert p.stats()['consecutive_errors']==2
     p._results.put((job,(),None,100));p.process(c.frame(3),c.image)
     assert p.stats()['consecutive_errors']==0
+
+
+
+def multi_perception():
+    from reach.masks import encode_rle
+    c=Camera();p=Perception({},c,None)
+    p.tracker._estimate=lambda *a:(np.array([[1,0,5],[0,1,0],[0,0,1]],float),100,1.0,0.0)
+    p.set_phrase('wallet');p.process(c.frame(0),c.image)
+    job=p._jobs.get_nowait()
+    mask=encode_rle(np.ones((50,50),np.uint8))
+    items=tuple(Instance(name,(x,200,x+50,250),score,mask)
+                for name,x,score in [('a',100,.95),('b',300,.9),('c',500,.85)])
+    p._results.put((job,items,None,10));p.process(c.frame(1),c.image)
+    return c,p
+
+
+def test_three_instances_choose_exclude_filter_refresh_and_clear():
+    c,p=multi_perception()
+    t=p.latest();assert len(t.instances)==3
+    assert t.instances[t.chosen].mask_rle is not None
+    assert all(item.mask_rle is None for i,item in enumerate(t.instances) if i!=t.chosen)
+    assert p.choose('b') and p.latest().instances[p.latest().chosen].sam_id=='b'
+    old=p.latest();old_box=old.instances[old.chosen].box_xyxy
+    assert p.exclude(old.frame_id,old_box)
+    assert p.choose('a') and len(p.latest().instances)==2
+    p.process(c.frame(2),c.image)
+    assert p.latest().instances[0].box_xyxy[0]==110
+    assert p.latest().instances[1].box_xyxy[0]==510
+    job=p._jobs.get_nowait()
+    excluded=p.stats()['excluded_boxes'][0]
+    items=(Instance('new-b',excluded,.99,None),Instance('a',(110,200,160,250),.95,None))
+    p._results.put((job,items,None,10));p.process(c.frame(3),c.image)
+    assert all(item.sam_id!='new-b' for item in p.latest().instances)
+    assert not p.stats()['ambiguous']
+    p.set_phrase('apple');p.process(c.frame(4),c.image)
+    assert p.stats()['excluded_boxes']==[]
+
+
+def test_paused_confirmation_keeps_motion_for_late_exclusion():
+    c,p=multi_perception();old=p.latest();box=old.instances[old.chosen].box_xyxy
+    p.tracker.depth=3;p.set_state('IDLE')
+    for i in range(2,8):p.process(c.frame(i),c.image)
+    assert p.latest() is None and p.tracker.compose(old.frame_id) is None
+    expected=p.tracker.current().box_xyxy
+    assert p.exclude(old.frame_id,box)
+    assert p.stats()['excluded_boxes']==[expected]
+    assert p.choose('b')
+    p.set_state('GUIDING')
+    assert p.latest().instances[p.latest().chosen].sam_id=='b'
+
+
+def test_chosen_mask_warps_once_per_frame_not_per_publish(monkeypatch):
+    c,p=multi_perception()
+    original=cv2.warpPerspective;calls=[]
+    def warp(*a,**kw):
+        calls.append(True);return original(*a,**kw)
+    monkeypatch.setattr('reach.tracker.cv2.warpPerspective',warp)
+    for _ in range(10):p._publish()
+    assert calls==[]
+    p.process(c.frame(2),c.image)
+    assert len(calls)==1
+    for _ in range(10):p._publish()
+    assert len(calls)==1

@@ -46,6 +46,11 @@ brain:
   target_lost_speak_s: 2.0
   target_give_up_s: 15
   network_speak_every_s: 15
+  readback_wait_s: 2.5
+  mismatch_confidence: 0.6
+  disambiguate_s: 8
+  ask_touch_enabled: false
+  ask_touch_s: 1.5
 voice:
   model: muse-voice-transcribe-1.0
   mode: ENDPOINTING
