@@ -32,6 +32,7 @@ from .trial_resume import load_trial_resume, saved_trial_prefix
 from .spark import ReadBackClient, make_crop
 from .costs import estimate
 from .recording import OverlayRecorder
+from .session_codec import replay_config
 
 
 class Runner:
@@ -98,16 +99,9 @@ class Runner:
     def _manifest(self):
         result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
         config_hash = sha256(json.dumps(self.cfg, sort_keys=True).encode()).hexdigest()
-        def without_secrets(value):
-            if isinstance(value,dict):
-                return {k:without_secrets(v) for k,v in value.items()
-                        if k.casefold() not in ('api_key','access_token','authorization','password','secret','token')}
-            if isinstance(value,list):
-                return [without_secrets(v) for v in value]
-            return value
         return {"app_commit": result.stdout.strip() if result.returncode == 0 else "unknown",
                 "config_hash": config_hash, "contract_version": CONTRACT_VERSION,
-                "config": without_secrets(self.cfg),
+                "config": replay_config(self.cfg),
                 "models": {"hand": "hand_landmarker.task", "sam": self.cfg.get("sam", {}).get("model")},
                 "mount": self.args.mount, "os": platform.platform(), "source": self.camera.source,
                 "prediction": self.args.predict, "muted": self._muted,
@@ -203,7 +197,7 @@ class Runner:
                 self.perception.choose(effect.payload['sam_id'])
             elif effect.kind == 'exclude_instance':
                 payload = effect.payload
-                self.perception.exclude(payload['frame_id'],tuple(payload['box_xyxy']))
+                self.perception.exclude(payload['frame_id'],payload['box_xyxy'])
                 self._excluded.append(dict(payload))
             elif effect.kind == 'log':
                 kind,data = effect.key, effect.payload or {}

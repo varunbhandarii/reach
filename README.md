@@ -184,3 +184,8 @@ output; it does not save raw microphone audio.
 The on-screen cost total is an estimate from configured prices, images sent,
 streamed voice seconds and returned Spark token usage. It is not an invoice or
 a statement of available credits.
+
+Controller confirmation, spatial selection and deterministic offline replay are
+documented in [the integration reference](docs/confirmation.md).
+`reach replay RUN_DIR` verifies recorded inputs/outputs without a camera or API;
+`--strip OUTPUT_DIR` writes a fresh events-only copy with canonical command text.

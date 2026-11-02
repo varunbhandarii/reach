@@ -72,6 +72,9 @@ def parser():
     replay.add_argument("run_dir", type=Path)
     replay.add_argument("--frames", action="store_true")
     replay.add_argument("--force", action="store_true")
+    replay_full=commands.add_parser('replay', help='Verify saved controller decisions without devices or network')
+    replay_full.add_argument('run_dir',type=Path)
+    replay_full.add_argument('--strip',type=Path,metavar='OUTPUT_DIR',help='Create a fresh events-only copy with canonical command text')
     return result
 
 
@@ -161,6 +164,24 @@ def main(argv=None):
         if args.command == "replay-contact":
             from .replay_contact import replay_contact
             print(json.dumps(replay_contact(args.run_dir, frames=args.frames, force=args.force), indent=2))
+            return 0
+        if args.command == 'replay':
+            from .replay import replay_session, ReplayError
+            try:
+                replayed=replay_session(args.run_dir,strip=args.strip)
+            except ReplayError as exc:
+                print(f'Cannot replay: {exc}',file=sys.stderr)
+                return 2
+            if replayed['status']=='no_inputs':
+                print('no replay inputs')
+                return 0
+            if replayed['status']=='diverged':
+                print(f"replay divergence: step {replayed['step']}, field {replayed['field']}; "
+                      f"logged={json.dumps(replayed['logged'])[:300]}; replayed={json.dumps(replayed['replayed'])[:300]}")
+                return 1
+            print(f"replay OK: {replayed['steps']} steps, {replayed['effects']} effects, "
+                  f"{replayed['state_changes']} state changes, read-backs {replayed['readbacks']}")
+            if replayed.get('stripped'): print('Events-only copy: '+replayed['stripped'])
             return 0
         if args.command == "report":
             from .session_report import summarize

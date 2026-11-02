@@ -76,7 +76,7 @@ def test_same_find_rechecks_new_find_discards_old_target():
 def test_interrupts_speech_and_stop_dominates_batch(kind,key):
     b=guiding();d,e=step(b,.2,[cmd('find','apple'),cmd(kind)],h(),t())
     assert d.state=='IDLE' and d.cue is None and keys(e,'speak')==[key]
-    assert e[0].kind=='cancel_speech' and not any(x.kind=='set_phrase' and x.text for x in e)
+    assert e[0].key=='brain_in' and any(x.kind=='cancel_speech' for x in e) and not any(x.kind=='set_phrase' and x.text for x in e)
 
 
 def test_veto_repeat_no_choose_and_offline_network_notices():
@@ -92,15 +92,15 @@ def test_veto_repeat_no_choose_and_offline_network_notices():
     assert 'network' in keys(step(b,18,consecutive_errors=2)[1],'speak')
 
 
-def test_contact_only_guiding_then_done_and_idle():
+def test_contact_only_guiding_then_confirmation_timeout_and_idle():
     b=guiding()
-    for i in range(1,8):d,e=step(b,.1+i*.05,hand=h(i,(True),(150,150)),target=t())
-    assert d.state=='CONTACT' and keys(e,'earcon')==['contact'] and d.cue is None
+    for i in range(1,8):d,e=step(b,.1+i*.05,hand=h(i,True,(150,150)),target=t())
+    assert d.state=='CONFIRMING' and keys(e,'earcon')==['contact'] and d.cue is None
     assert keys(e,'perception_state')==['IDLE']
-    d,e=b.step(.6,hand=h(9),target=t(),speaking=True)
-    assert d.state=='CONTACT'
-    assert b.step(2.5,speaking=True)[0].state=='DONE'
-    assert b.step(3.5)[0].state=='IDLE'
+    assert any(x.kind=='readback' for x in e)
+    assert b.step(.6,hand=h(9),target=t(),speaking=True)[0].state=='CONFIRMING'
+    assert b.step(6.5,speaking=True)[0].state=='DONE'
+    assert b.step(7.5)[0].state=='IDLE'
     b=guiding();step(b,.2,hand=h(present=False),target=t())
     assert step(b,1,hand=h(present=False),target=t())[0].state=='HAND_LOST'
 
@@ -130,11 +130,11 @@ def test_cancel_veto_boundary(elapsed,key):
 
 
 def test_contact_speech_completion_and_passive_commands():
-    b=Brain();b.state='CONTACT';b.phrase='wallet'
-    d,e=b.step(.2,speaking=False)
-    assert d.state=='DONE' and any(x.kind=='set_phrase' and x.text is None for x in e)
+    b=Brain();b.state='DONE';b.phrase='wallet'
+    d,e=b.step(1,speaking=False)
+    assert d.state=='IDLE' and any(x.kind=='set_phrase' and x.text is None for x in e)
     b=Brain();d,e=step(b,0,[cmd('choose','left'),cmd('unknown')])
-    assert d.state=='IDLE' and e==[]
+    assert d.state=='IDLE' and [x.key for x in e]==['brain_in','brain_out']
 
 
 def test_disabled_contact_keeps_guiding_without_chimes():
