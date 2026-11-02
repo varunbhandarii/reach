@@ -52,8 +52,8 @@ def load_trial_resume(root, *, count, mode, objects, seed, limit, mount, predict
         raise TrialResumeError('Use the original total trial count when resuming.')
     if any(row.get('limit_s') != limit for row in starts):
         raise TrialResumeError('Resume must keep the original per-trial time limit.')
-    if manifest.get('contract_version', '3') != '3':
-        raise TrialResumeError('Resume requires the same shared session contract version.')
+    if manifest.get('contract_version', '3') not in ('3','4'):
+        raise TrialResumeError('Resume requires a compatible shared session contract version.')
     if mode not in ('phrase', 'voice'):
         raise TrialResumeError('Resume currently supports scripted phrase or voice trials.')
     rng = random.Random(seed)
