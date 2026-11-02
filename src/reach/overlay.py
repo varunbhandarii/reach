@@ -113,4 +113,6 @@ def draw_overlay(image, hand, target, decision, stats, *, muted=False, trial=Non
         text('ON LINE',(left,sound_top+111),.46,(100,240,180))
     if not enabled:
         text('STEREO UNAVAILABLE' if not muted else 'MUTED',(left,sound_top+111),.46,(90,160,255))
+    elif (voice.get('audio_route') or {}).get('status') == 'unknown':
+        text('ROUTE UNKNOWN: CHECK PREFLIGHT',(left,sound_top+111),.46,(90,160,255))
     return canvas

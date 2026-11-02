@@ -29,6 +29,7 @@ def replay_config(cfg, objects=None):
                 'readback_wait_s','mismatch_confidence','disambiguate_s','ask_touch_enabled','ask_touch_s')
     contact_keys=('enabled','still_ms','refractory_s','box_grow','min_margin_px','still_speed','hold_frames','overlap_min')
     return plain({'brain': {key:value for key,value in cfg.get('brain',{}).items() if key in brain_keys},
+                  **({'safety': cfg['safety']} if 'safety' in cfg else {}),
                   'contact': {key:value for key,value in cfg.get('contact',{}).items() if key in contact_keys},
                   'audio': {'gain': cfg.get('audio', {}).get('gain', .2)},
                   'sam': {'tie_margin': cfg.get('sam', {}).get('tie_margin', .15)},
@@ -55,6 +56,7 @@ def restore_inputs(data):
                                     for row in target['instances'])
         target = TargetObs(**target)
     return dict(hand=hand, target=target, perception_stats=data.get('perception_stats', {}),
+                **({'frame_id': data['frame_id']} if 'frame_id' in data else {}),
                 commands=tuple(Command(**row) for row in data.get('commands', ())),
                 results=tuple(SceneList(**{**row,'objects':tuple(tuple(item) for item in row['objects'])})
                               if 'objects' in row else ReadBack(**row) for row in data.get('results', ())),

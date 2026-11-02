@@ -4,7 +4,6 @@ bottle
 keys
 remote
 phone
-scissors
 banana
 box
 cancel

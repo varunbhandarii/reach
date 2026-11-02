@@ -1,0 +1,69 @@
+phrases:
+  ready: 'तैयार हूँ।'
+  checking: 'फिर से देख रही हूँ।'
+  cancelled: 'रद्द कर दिया।'
+  stopped: 'रोक दिया।'
+  yes_ack: 'आपने हाँ कहा।'
+  no_ack: 'आपने नहीं कहा।'
+  voice_off: 'आवाज़ से निर्देश अभी उपलब्ध नहीं हैं। कीबोर्ड का इस्तेमाल करें।'
+  network: 'कनेक्शन में दिक्कत है। कोशिश जारी है।'
+  hand_lost: 'अपना हाथ कैमरे के सामने लाएँ।'
+  many: 'मुझे एक से ज़्यादा चीज़ें दिख रही हैं।'
+  looking: '{object} खोज रही हूँ।'
+  found: '{object} की जगह पता चल गई है: {where}।'
+  sweep: '{object} को अभी नहीं ढूँढ पाई। फ़ोन धीरे-धीरे घुमाएँ।'
+  not_found: '{object} को नहीं ढूँढ पाई।'
+  target_lost: '{object} दिखना बंद हो गया। फ़ोन स्थिर रखें।'
+  gave_up: '{object} को अब नहीं देख पा रही हूँ।'
+  contact: 'आपका हाथ {object} को छू रहा है।'
+  confirmed: 'आपका हाथ {object} तक पहुँच गया है।'
+  wrong_object: 'यह {object} नहीं है।'
+  unconfirmed: 'मैं {object} की पहचान की पुष्टि नहीं कर पा रही हूँ।'
+  object_name: 'यह {name} जैसा दिख रहा है।'
+  disambiguate: 'यहाँ {object} के {count} विकल्प हैं। {prompt}'
+  choose_again: 'बायाँ या दायाँ कहें।'
+  choice_left: 'आपके बाएँ वाली चीज़ की ओर ले जा रही हूँ।'
+  choice_right: 'आपके दाएँ वाली चीज़ की ओर ले जा रही हूँ।'
+  choice_nearest: 'सबसे पास वाली चीज़ की ओर ले जा रही हूँ।'
+  choice_other: '{choice_word} चीज़ की ओर ले जा रही हूँ।'
+  horizontal_choices: 'एक आपके बाएँ है, एक दाएँ। बायाँ या दायाँ कहें।'
+  vertical_choices: 'एक आगे है, एक पास। आगे वाला या पास वाला कहें।'
+  ask_touch: 'क्या आप इसे छू रहे हैं?'
+  trial: 'प्रयास {number}। {object} खोजें।'
+  safety_refusal: 'मैं आपके हाथ को नुकीली या गर्म चीज़ों की ओर नहीं ले जाऊँगी।'
+  describing: 'आसपास देख रही हूँ।'
+  describe_error: 'अभी आसपास की चीज़ें नहीं देख पाई।'
+  scene_empty: 'मुझे कोई पहचानने लायक चीज़ नहीं दिख रही।'
+  scene_list: 'मुझे {items} दिख रहे हैं।'
+  hazard: 'सावधान, यहाँ {name} है।'
+  stereo_lost: 'स्टीरियो आवाज़ बंद हो गई है। अपने हेडफ़ोन जाँचें।'
+  stereo_back: 'स्टीरियो आवाज़ फिर चालू हो गई है।'
+  parse_help: 'माफ़ कीजिए, खोजो कहें और चीज़ का नाम बताएँ।'
+objects:
+  wallet: बटुआ
+  pen: कलम
+  ball: गेंद
+  apple: सेब
+  bottle: बोतल
+  mug: मग
+  blue pen: नीली कलम
+  red pen: लाल कलम
+  black pen: काली कलम
+  white pen: सफेद कलम
+  transparent pen: पारदर्शी कलम
+  knife: चाकू
+  scissors: कैंची
+directions:
+  to your left: आपके बाएँ
+  to your right: आपके दाएँ
+  straight ahead: सीधे आगे
+  ahead on your left: आगे बाईं ओर
+  ahead on your right: आगे दाईं ओर
+  back toward you: पीछे आपकी ओर
+  back on your left: पीछे बाईं ओर
+  back on your right: पीछे दाईं ओर
+  on your left: आपके बाएँ
+  on your right: आपके दाएँ
+  in the middle: बीच में
+choices: {closer: पास वाली, farther: दूर वाली, other: दूसरी}
+counts: {two: दो, three: तीन}

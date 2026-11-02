@@ -9,6 +9,9 @@ EXACT = {"stop": "stop", "cancel": "cancel", "never mind": "cancel", "nevermind"
          "start over": "start_over", "reset": "start_over", "repeat": "repeat", "say again": "repeat",
          "say that again": "repeat", "recheck": "recheck", "check again": "recheck", "look again": "recheck",
          "yes": "yes", "yeah": "yes", "yep": "yes", "correct": "yes", "no": "no", "nope": "no", "wrong": "no"}
+EXACT.update(dict.fromkeys(("what's on the table", "what is on the table", "what do you see",
+                           "what's in front of me", "what is in front of me", "what's here",
+                           "what is here", "describe", "look around"), 'describe'))
 FILLERS = ("hey reach", "can you", "could you", "please", "okay", "um", "uh")
 
 
@@ -25,7 +28,8 @@ def clean_phrase(phrase, vocabulary):
     phrase = ' '.join(words)
     if not phrase or len(phrase) > 120:
         return None
-    matches = difflib.get_close_matches(phrase, vocabulary, n=1, cutoff=.8)
+    # Correct the noun only: matching a whole phrase would erase colour attributes.
+    matches = difflib.get_close_matches(phrase, vocabulary, n=1, cutoff=.8) if len(words) == 1 else []
     if matches:
         return matches[0]
     matches = difflib.get_close_matches(words[-1], vocabulary, n=1, cutoff=.8)
@@ -38,6 +42,10 @@ def clean_phrase(phrase, vocabulary):
 def parse(transcript, objects=DEFAULT_OBJECTS, vocabulary=(), *, t_mono=0.0, turn_id=None, source="voice"):
     if not isinstance(transcript, str):
         raise TypeError("transcript must be text")
+    if any(char.isalpha() and not char.isascii() for char in transcript):
+        # Do not strip Hindi words and accidentally treat an English noun in a
+        # mixed-language request as a complete English command.
+        return Command('unknown', None, transcript, turn_id, t_mono, source)
     text = normalize(transcript)
     while True:
         prefix = next((p for p in FILLERS if text == p or text.startswith(p+' ')), None)

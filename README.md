@@ -152,8 +152,9 @@ result or a current lock.
 
 The deterministic command/session/contact components and local speech engine
 are described in [session integration](docs/session-integration.md).
-`reach replay-contact RUN_DIR --frames` inspects saved box/contact geometry
-without network or device access.
+`reach replay-contact RUN_DIR --frames` reconstructs contact from saved reducer
+inputs and masks when available, and labels older box-only logs explicitly.
+It runs without network or device access; logged geometry cannot prove touch.
 
 ## Touched-object read-back and recording
 
@@ -203,7 +204,7 @@ The scene client lists up to six visible objects and their image positions. Its
 worker runs independently of read-back, uses a six-second deadline and keeps a
 local cache for file sources. The default image size is 512 pixels on the long
 side with low detail; `scene.image_long_side` and `scene.detail` are configurable.
-With a describe-capable controller, press **D** or ask "what's on the table?",
+Press **D** or ask "what's on the table?",
 then request one of the listed objects by name.
 
 When the local grammar cannot understand a request, a bounded text-only fallback
@@ -215,10 +216,31 @@ Windows speech replies stay English. Scene and fallback requests use standard
 Spark with `store: false`, as described in Meta's
 [Responses API](https://dev.meta.ai/docs/protocols/responses).
 
-These features require the shared controller's describe and safety handling.
-Sharp and hot object requests must be refused before grounding or guidance;
-the client modules alone do not implement that refusal. Keep physical checks
-pending until the integrated controller is available and verified.
+Sharp and hot object requests receive a spoken refusal before any grounding
+request. Scene lists mention a recognized hazard only as a warning. Refusals
+apply equally to local commands and parsed natural requests. This tool is for
+non-hazardous tabletop objects; object names returned by a model can be wrong.
+
+## Mac stereo and Hindi speech
+
+Use the MacBook microphone for input and select AirPods as the system output.
+Reach reads the live CoreAudio output route every two seconds. A low sample
+rate or a change away from the starting output mutes guidance, announces the
+loss and blocks starting a timed trial. Reconnecting the original stereo
+output restores guidance and announces recovery. Unknown route metadata is
+labeled explicitly; it is not a stereo measurement. Selecting an AirPods
+microphone is refused before opening the input stream.
+
+On macOS, English and Hindi request bias and the installed Lekha voice are
+configured by default. `tts.voices` selects a voice per language. Hindi commands
+use their spoken object names in checked-in Hindi templates; SAM still receives
+an English target. Fixed phrases for both languages are rendered before the
+microphone starts. Windows continues to speak English. The phrase tables in
+`config/phrases/` can be reviewed or edited without making translation calls.
+
+Keep a round object supported on a folded cloth so it cannot roll, and touch
+with a visible index fingertip before lifting it. Briefly held hand poses may
+maintain guidance, but cannot accumulate contact dwell time.
 
 ## Sound display and event timelines
 

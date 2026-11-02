@@ -8,6 +8,33 @@ from .contact import ContactRule
 from .types import HandObs, Instance, TargetObs
 
 
+def _snapshot_firings(root, events, cfg):
+    """Prefer complete logged reducer inputs, including the actual local masks."""
+    from .brain import Brain
+    from .session_codec import restore_inputs
+    manifest = json.loads((root/'manifest.json').read_text(encoding='utf-8'))
+    brain = Brain(cfg if cfg is not None else manifest['config'], manifest.get('objects', ('wallet','pen','ball','apple')))
+    firings, ends = [], {}
+    started = None
+    for event in events:
+        kind, data = event['type'], event['data']
+        if kind == 'trial_start':
+            started = event['t_mono']
+        elif kind == 'trial_end':
+            ends[event['trial']] = {'time': event['t_mono'], 'success': data.get('success', False)}
+            started = None
+        elif kind == 'brain_in':
+            decision, effects = brain.step(data['now'], **restore_inputs(data))
+            if any(e.kind == 'earcon' and e.key == 'contact' for e in effects):
+                state = brain.contact_state
+                firings.append({'trial': event.get('trial'), 'phrase': brain.phrase or 'clicked point',
+                    'frame_id': decision.hand_frame_id, 'target_frame_id': decision.target_frame_id,
+                    't_mono': data['now'], 'trial_elapsed_s': data['now']-started if started is not None else None,
+                    'reported_touch_after_s': None, 'inside': state.inside, 'still': state.still,
+                    'overlap': state.overlap, 'rel_speed': state.rel_speed, 'review': ''})
+    return firings, ends
+
+
 def replay_contact(run_dir, *, frames=False, force=False, cfg=None):
     root=Path(run_dir)
     destination=root/'contact-replay.csv'
@@ -19,7 +46,8 @@ def replay_contact(run_dir, *, frames=False, force=False, cfg=None):
             if line.strip(): events.append(json.loads(line))
     rule=ContactRule(cfg)
     current=None;trial=None;started=None;phrase=None;firings=[];ends={}
-    for event in events:
+    snapshots = any(event['type'] == 'brain_in' for event in events)
+    for event in (() if snapshots else events):
         kind,data,now=event['type'],event['data'],event['t_mono']
         if kind=='trial_start':
             trial=event['trial'];started=now;rule.reset()
@@ -54,6 +82,8 @@ def replay_contact(run_dir, *, frames=False, force=False, cfg=None):
                     'trial_elapsed_s':now-started if started is not None else None,
                     'reported_touch_after_s':None,'inside':state.inside,'still':state.still,
                     'overlap':state.overlap,'rel_speed':state.rel_speed,'review':''})
+    if snapshots:
+        firings, ends = _snapshot_firings(root, events, cfg)
     for row in firings:
         end=ends.get(row['trial'])
         if end and end['success'] and end['time']>=row['t_mono']:
@@ -68,7 +98,9 @@ def replay_contact(run_dir, *, frames=False, force=False, cfg=None):
             source=root/'frames'/f"{int(row['frame_id'])}.jpg"
             if source.exists():shutil.copyfile(source,folder/f"{i:03d}-frame-{row['frame_id']}.jpg")
     return {'firings':firings,'csv':str(destination),
-            'limitation':'Offline box geometry, not physical contact truth. Target-box events do not reconstruct propagated masks; overlap is unavailable. Legacy logs also lack landmarks. Spot-check every saved firing frame.'}
+            'mode': 'saved_reducer_inputs' if snapshots else 'legacy_box_geometry',
+            'limitation': ('Offline reducer replay with the logged masks and contact arming. Physical touch truth still requires frame/owner review.'
+                          if snapshots else 'Offline box geometry, not physical contact truth. Target-box events do not reconstruct propagated masks; overlap is unavailable. Legacy logs also lack landmarks. Spot-check every saved firing frame.')}
 
 
 def main(argv=None):

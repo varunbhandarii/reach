@@ -1,0 +1,69 @@
+phrases:
+  ready: 'Ready.'
+  checking: 'Checking.'
+  cancelled: 'Cancelled.'
+  stopped: 'Stopped.'
+  yes_ack: 'I heard yes.'
+  no_ack: 'I heard no.'
+  voice_off: 'Voice is offline. Use the keys.'
+  network: 'Connection problem. Still trying.'
+  hand_lost: 'Bring your hand into view.'
+  many: 'I see more than one.'
+  looking: 'Looking for {object}.'
+  found: 'Found {object}, {where}.'
+  sweep: "I can't see {object} yet. Move the phone slowly."
+  not_found: "I couldn't find {object}."
+  target_lost: 'Lost {object}. Hold the phone still.'
+  gave_up: 'I lost {object}.'
+  contact: "You're touching {object}."
+  confirmed: 'You have {object}.'
+  wrong_object: "That's not {object}."
+  unconfirmed: "I can't confirm {object}."
+  object_name: 'It looks like a {name}.'
+  disambiguate: 'I see {count} {object}s. {prompt}'
+  choose_again: 'Say left or right.'
+  choice_left: 'Guiding to the one on your left.'
+  choice_right: 'Guiding to the one on your right.'
+  choice_nearest: 'Guiding to the nearest one.'
+  choice_other: 'Guiding to the {choice_word} one.'
+  horizontal_choices: 'One on your left, one on your right. Say left or right.'
+  vertical_choices: 'One ahead, one closer. Say ahead or closer.'
+  ask_touch: 'Are you touching it?'
+  trial: 'Trial {number}. Find the {object}.'
+  safety_refusal: "I won't guide your hand to sharp or hot objects."
+  describing: 'Looking around.'
+  describe_error: "I couldn't look around just now."
+  scene_empty: "I don't see anything I can name."
+  scene_list: 'I can see {items}.'
+  hazard: 'Careful, there is a {name}.'
+  stereo_lost: 'Stereo lost. Check your headphones.'
+  stereo_back: 'Stereo is back.'
+  parse_help: 'Sorry, say find and the object.'
+objects:
+  wallet: wallet
+  pen: pen
+  ball: ball
+  apple: apple
+  bottle: bottle
+  mug: mug
+  blue pen: blue pen
+  red pen: red pen
+  black pen: black pen
+  white pen: white pen
+  transparent pen: transparent pen
+  knife: knife
+  scissors: scissors
+directions:
+  to your left: to your left
+  to your right: to your right
+  straight ahead: straight ahead
+  ahead on your left: ahead on your left
+  ahead on your right: ahead on your right
+  back toward you: back toward you
+  back on your left: back on your left
+  back on your right: back on your right
+  on your left: on your left
+  on your right: on your right
+  in the middle: in the middle
+choices: {closer: closer, farther: farther, other: other}
+counts: {two: two, three: three}

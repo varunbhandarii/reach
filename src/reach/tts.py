@@ -8,6 +8,7 @@ import threading
 import time
 
 import numpy as np
+from .phrases import table, translate, speech_language
 
 
 def trim_silence(samples, rate, threshold_db=-40, padding_s=.020):
@@ -39,7 +40,7 @@ class SilentSpeaker:
         pass
     def wait_ready(self, timeout=120):
         return True
-    def say(self, text, key=None, priority=0):
+    def say(self, text, key=None, priority=0, **kwargs):
         self.last_text = text
     def cancel(self, **kwargs):
         self.last_text = None
@@ -138,6 +139,7 @@ class Utterance:
     priority: int
     requested: float
     processing: bool = False
+    language: str = 'en'
 
 
 class Speaker:
@@ -151,7 +153,12 @@ class Speaker:
         self._current = None
         self._waiting = deque()
         self._cache = {}
-        self._preload = deque(phrase_texts(cfg.get('objects', ['wallet', 'pen', 'ball', 'apple'])))
+        texts = phrase_texts(cfg.get('objects', ['wallet', 'pen', 'ball', 'apple']))
+        texts += [text for text in table('en')['phrases'].values() if '{' not in text]
+        self._preload = deque((text, 'en') for text in dict.fromkeys(texts))
+        if sys.platform == 'darwin' and self.cfg.get('voices', {}).get('hi'):
+            self._preload.extend((translated, 'hi') for text in dict.fromkeys(texts)
+                                 if (translated := translate(text, language='hi')))
         self._requests = {}
         self._next = 0
         self._engine_name = None
@@ -163,7 +170,7 @@ class Speaker:
     def _emit(self, event, job=None, **data):
         if self.log:
             self.log.emit('speech', {'event': event, **({'id': job.ident, 'key': job.key,
-                'text': job.text, 'priority': job.priority} if job else {}), **data})
+                'text': job.text, 'priority': job.priority, 'language': job.language} if job else {}), **data})
 
     def start(self):
         with self._condition:
@@ -186,17 +193,22 @@ class Speaker:
         with self._condition:
             return self._current is not None or bool(self._waiting)
 
-    def say(self, text, key=None, priority=0):
+    def say(self, text, key=None, priority=0, *, language=None, spoken_phrase=None):
+        source_text = text
+        language = speech_language(language)
+        text = translate(text, key, language=language, spoken_phrase=spoken_phrase)
+        if text is None:
+            return None
         if not text or len(text) > 300 or priority not in (0, 1, 2):
             raise ValueError('Speech needs short text and priority 0, 1 or 2')
         self.start()
         with self._condition:
             if self._stop:
                 return None
-            job = Utterance(self._next, text, key, priority, self._clock())
+            job = Utterance(self._next, text, key, priority, self._clock(), language=language)
             self._next += 1
             self._requests[job.ident] = job
-            self.last_text = text
+            self.last_text = source_text
             self._emit('request', job)
             if self._current is None:
                 self._current = job
@@ -254,7 +266,7 @@ class Speaker:
                     self._requests.pop(ident, None)
 
     def _run(self):
-        engine = None
+        engines = {}
         try:
             factory = self._factory
             if factory is None:
@@ -262,13 +274,13 @@ class Speaker:
                 name = ('sapi' if sys.platform == 'win32' else 'say' if sys.platform == 'darwin' else 'null') if name == 'auto' else name
                 factory = {'sapi': SapiEngine, 'say': SayEngine, 'null': NullEngine}[name]
             try:
-                engine = factory(self.cfg)
+                engines['en'] = factory({**self.cfg, 'voice': self.cfg.get('voices', {}).get('en', self.cfg.get('voice'))})
             except Exception as exc:
                 self._fallback = True
                 self._error = f'Local speech unavailable ({type(exc).__name__}); captions remain available'
                 self._emit('drop', reason=self._error)
-                engine = NullEngine()
-            self._engine_name = engine.name
+                engines['en'] = NullEngine()
+            self._engine_name = engines['en'].name
             while True:
                 with self._condition:
                     if self._stop:
@@ -277,14 +289,22 @@ class Speaker:
                     if job is not None and not job.processing:
                         job.processing = True
                         text = job.text
+                        language = job.language
                     elif self._preload:
-                        text, job = self._preload.popleft(), None
+                        (text, language), job = self._preload.popleft(), None
                     else:
                         self._ready.set()
                         self._condition.wait(.02)
                         continue
+                if language not in engines:
+                    voice = self.cfg.get('voices', {}).get(language)
+                    if not voice:
+                        raise ValueError(f'No installed speech voice configured for {language}')
+                    engines[language] = factory({**self.cfg, 'voice': voice})
+                engine = engines[language]
                 rate = self.audio.sample_rate
-                cache_key = (engine.name, self.cfg.get('voice'), self.cfg.get('rate', 210), rate, text)
+                voice = self.cfg.get('voices', {}).get(language, self.cfg.get('voice'))
+                cache_key = (language, engine.name, voice, self.cfg.get('rate', 210), rate, text)
                 start = self._clock()
                 cached = cache_key in self._cache
                 if not cached:
@@ -312,7 +332,7 @@ class Speaker:
                 pass
         finally:
             self._ready.set()
-            if engine:
+            for engine in engines.values():
                 engine.close()
 
     def stats(self):
