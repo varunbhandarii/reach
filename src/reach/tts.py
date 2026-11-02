@@ -159,6 +159,8 @@ class Speaker:
         if sys.platform == 'darwin' and self.cfg.get('voices', {}).get('hi'):
             self._preload.extend((translated, 'hi') for text in dict.fromkeys(texts)
                                  if (translated := translate(text, language='hi')))
+        self._preload_total = len(self._preload)
+        self._startup_started = self._startup_elapsed = None
         self._requests = {}
         self._next = 0
         self._engine_name = None
@@ -179,11 +181,17 @@ class Speaker:
             self._thread = threading.Thread(target=self._run, name='speech', daemon=True)
             self._thread.start()
 
-    def wait_ready(self, timeout=120):
+    def wait_ready(self, timeout=None):
         """Finish startup synthesis before the microphone or trial timer opens."""
+        timeout = float(self.cfg.get('startup_timeout_s', 120) if timeout is None else timeout)
+        if not 0 < timeout <= 600:
+            raise ValueError('Speech startup deadline must be between 0 and 600 seconds')
         self.start()
-        if not self._ready.wait(timeout):
-            raise RuntimeError('Speech cache did not finish before its startup deadline')
+        deadline = time.monotonic()+timeout
+        while not self._ready.wait(min(10, max(0, deadline-time.monotonic()))):
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Speech cache did not finish before its startup deadline')
+            print(f'Preparing speech: {self._preload_total-len(self._preload)}/{self._preload_total} phrases; first start takes longer.', flush=True)
         if self._error and not self._fallback:
             raise RuntimeError(self._error)
         return True
@@ -267,6 +275,7 @@ class Speaker:
 
     def _run(self):
         engines = {}
+        self._startup_started = self._clock()
         try:
             factory = self._factory
             if factory is None:
@@ -293,6 +302,8 @@ class Speaker:
                     elif self._preload:
                         (text, language), job = self._preload.popleft(), None
                     else:
+                        if self._startup_elapsed is None:
+                            self._startup_elapsed = self._clock()-self._startup_started
                         self._ready.set()
                         self._condition.wait(.02)
                         continue
@@ -343,6 +354,7 @@ class Speaker:
                     'caption': self.last_text,
                     'priority': current.priority if current else None, 'engine': self._engine_name,
                     'cache_ready': self._ready.is_set(), 'cached_phrases': len(self._cache), 'fallback': self._fallback, 'error': self._error,
+                    'cache_total': self._preload_total, 'cache_remaining': len(self._preload), 'startup_elapsed_s': self._startup_elapsed,
                     'first_audio_p50_ms': float(np.median(latencies)) if latencies else None,
                     'first_audio_p95_ms': float(np.percentile(latencies, 95)) if latencies else None}
 

@@ -237,6 +237,11 @@ use their spoken object names in checked-in Hindi templates; SAM still receives
 an English target. Fixed phrases for both languages are rendered before the
 microphone starts. Windows continues to speak English. The phrase tables in
 `config/phrases/` can be reviewed or edited without making translation calls.
+The first bilingual preparation can take a few minutes and prints progress;
+its configured deadline is five minutes. Named voices reuse a validated local
+sample cache on later starts. Voice, rate, output sample rate and OS version
+are part of that cache identity; changing the unnamed system default does not
+reuse a persistent voice cache.
 
 Keep a round object supported on a folded cloth so it cannot roll, and touch
 with a visible index fingertip before lifting it. Briefly held hand poses may
