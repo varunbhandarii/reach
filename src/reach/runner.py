@@ -5,6 +5,7 @@ from collections import deque
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import inspect
 from pathlib import Path
 import platform
 import subprocess
@@ -28,13 +29,16 @@ from .voice import VoiceClient
 from .tts import Speaker, SilentSpeaker
 from .session_io import CommandInbox, TrialActions, make_command
 from .trial_resume import load_trial_resume, saved_trial_prefix
+from .spark import ReadBackClient, make_crop
+from .costs import estimate
+from .recording import OverlayRecorder
 from .session_codec import replay_config
 
 
 class Runner:
     def __init__(self, cfg, args, *, camera_factory=Camera, hand_factory=HandTracker,
                  audio_factory=CueEngine, perception_factory=Perception, brain_factory=None,
-                 voice_factory=VoiceClient, speaker_factory=Speaker):
+                 voice_factory=VoiceClient, speaker_factory=Speaker, readback_factory=ReadBackClient):
         self.cfg, self.args = cfg, args
         self._resume = None
         retained = []
@@ -48,6 +52,7 @@ class Runner:
             from .brain import Brain
             brain_factory = Brain
         self.brain = brain_factory(cfg, cfg['objects'])
+        self._accepts_results = 'results' in inspect.signature(self.brain.step).parameters
         root = Path(args.log_dir or cfg.get("log", {}).get("dir", "runs"))
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         self.run_dir = root / stamp
@@ -55,6 +60,12 @@ class Runner:
         self.hand = hand_factory(cfg)
         self.audio = audio_factory(cfg)
         self.log = EventLog(self.run_dir, save_frames=cfg.get("log", {}).get("save_frames", True))
+        self.readback = readback_factory(cfg,self.log) if cfg.get('spark',{}).get('enabled',True) else None
+        self._hand_history = deque(maxlen=int(cfg.get('camera',{}).get('ring_depth',90)))
+        self._excluded = []
+        self._disabled_results = []
+        self._overlay_recorder = (OverlayRecorder(self.run_dir/('overlay.'+args.record_format),
+            float(cfg.get('record',{}).get('fps',30)),self.log) if args.record else None)
         self.camera.log = self.log
         self.inbox = CommandInbox(self.log)
         self.speaker = (speaker_factory if cfg.get('tts', {}).get('enabled', True) and not args.mute else SilentSpeaker)(cfg, self.audio, self.log)
@@ -106,6 +117,9 @@ class Runner:
                 "camera_median_assumption_ms": self.args.camera_latency_ms,
                 "voice": {k:v for k,v in self.cfg.get('voice', {}).items() if k not in ('api_key', 'access_token')},
                 "tts": dict(self.cfg.get('tts', {})), "contact": dict(self.cfg.get('contact', {})),
+                "spark": dict(self.cfg.get('spark',{})), "costs": dict(self.cfg.get('costs',{})),
+                "readback_ready":self._accepts_results,
+                "recording":bool(self._overlay_recorder),
                 "speech_probe_interval_s": self.args.speech_every,
                 "input_device": self.cfg.get('voice', {}).get('input_device'),
                 "latency_note": "Component estimate uses an earlier camera median; not an end-to-end latency measurement."}
@@ -146,6 +160,9 @@ class Runner:
                 if effect.key == 'contact' and self._trial:
                     self._trial.note_contact(now)
             elif effect.kind == 'set_phrase':
+                if effect.text != getattr(self,'_excluded_phrase',None):
+                    self._excluded = []
+                    self._excluded_phrase = effect.text
                 if self._click_mode and effect.text == 'clicked point' and self._pending_click is not None:
                     self.perception.select_point(*self._pending_click)
                     self._pending_click = None
@@ -157,18 +174,33 @@ class Runner:
                     self._pending_click = None
                 else:
                     self.perception.force_query()
+            elif effect.kind == 'perception_state':
+                self.perception.set_state(effect.key)
+            elif effect.kind == 'readback':
+                payload = effect.payload
+                if self.readback is not None:
+                    image = self.camera.get(payload['frame_id'])
+                    contact_hand = next((h for h in reversed(self._hand_history) if h.frame_id==payload['frame_id']),None)
+                    try:
+                        jpeg = make_crop(image,payload['box_xyxy'],contact_hand.hull_px if contact_hand else (),
+                                         int(self.cfg.get('spark',{}).get('image_long_side',512)))
+                    except (ValueError,TypeError,cv2.error):
+                        self.readback.fail(payload['request_id'],payload['frame_id'],payload['phrase'],'image_missing')
+                    else:
+                        self.readback.request(payload['request_id'],jpeg,payload['phrase'],payload['frame_id'])
+                else:
+                    # Explicit off mode returns an error result to close confirming gracefully.
+                    from .types import ReadBack
+                    self._disabled_results.append(ReadBack(payload['request_id'],payload['frame_id'],payload['phrase'],
+                        None,None,None,None,0.,'disabled'))
             elif effect.kind == 'choose_instance':
                 self.perception.choose(effect.payload['sam_id'])
             elif effect.kind == 'exclude_instance':
-                self.perception.exclude(effect.payload['frame_id'],effect.payload['box_xyxy'])
-            elif effect.kind == 'perception_state':
-                self.perception.set_state(effect.key)
+                payload = effect.payload
+                self.perception.exclude(payload['frame_id'],payload['box_xyxy'])
+                self._excluded.append(dict(payload))
             elif effect.kind == 'log':
-                payload = dict(effect.payload or {})
-                kind = effect.key or payload.pop('type', None) or payload.pop('kind', None)
-                if kind is None:
-                    kind = 'state' if 'from' in payload and 'to' in payload else 'contact' if 'inside' in payload else 'session'
-                data = payload.get('data', payload.get('payload', payload))
+                kind,data = effect.key, effect.payload or {}
                 self.log.emit(kind, data)
                 if kind == 'contact':
                     self._contact_signals = dict(data)
@@ -197,9 +229,12 @@ class Runner:
         stats.update(voice_connected=voice['connected'], voice_online=voice['connected'], voice_offline=not voice['connected'])
         if flipped is None:
             flipped = self.args.flip == 'on' or (self.args.flip == 'auto' and self.hand.upside_down)
+        results = self.readback.poll() if self.readback else list(self._disabled_results)
+        self._disabled_results.clear()
+        extra = {'results':tuple(results)} if self._accepts_results else {}
         decision, effects = self.brain.step(now, hand=hand, target=target, perception_stats=stats,
             commands=commands, speaking=self.speaker.busy,
-            frame_size=(frame.width, frame.height) if frame else (640, 480), flipped=flipped)
+            frame_size=(frame.width, frame.height) if frame else (640, 480), flipped=flipped,**extra)
         self._effects(effects, now)
         self.audio.set(None if self._muted or not voice.get('stereo_ok', True) else decision.cue)
         self._decision = decision
@@ -230,6 +265,7 @@ class Runner:
                     break
                 now = time.perf_counter()
                 self._latest_hand, self._hand_stamp = hand, now
+                self._hand_history.append(hand)
                 self.perception.on_hand(hand)
                 flipped = self.args.flip == "on" or (self.args.flip == "auto" and self.hand.upside_down)
                 # A blocked or delayed detector must not emit old guidance.
@@ -316,13 +352,35 @@ class Runner:
         elapsed = max(.001, (self._active_finished or time.perf_counter())-(self._started or time.perf_counter()))
         hand, camera, audio = self.hand.stats(), self.camera.stats(), self.audio.stats()
         latency = {"p50": float(np.median(self._latencies)), "p95": float(np.percentile(self._latencies, 95))} if self._latencies else None
+        perception = self.perception.stats()
+        voice = self.voice.stats() if self.voice else {'enabled':False}
+        readback = self.readback.stats() if self.readback else {'enabled':False}
+        cost = estimate(self.cfg,perception,voice,readback)
         return {"duration_s": elapsed, "capture": camera, "hand": hand,
                 "voice": self.voice.stats() if self.voice else {'enabled': False},
                 "speech": self.speaker.stats(), "contact": self._contact_signals,
-                "perception": self.perception.stats(), "audio": audio,
+                "perception": perception, "audio": audio,"readback":readback,"cost":cost,
+                "recording": {'video':self._overlay_recorder.stats() if self._overlay_recorder else None,
+                              'audio':self.audio.recording_stats() if hasattr(self.audio,'recording_stats') else None},
                 "controller_hz": self._decision_count/elapsed, "motion_to_sound_estimate_ms": latency,
                 "audio_measured": self.audio.running, "error": self._fatal,
                 "trials": self._trial.results if self._trial else []}
+
+    def _excluded_boxes(self,stats=None):
+        # The perception owner can publish exclusions in current-frame coordinates.
+        stats = self.perception.stats() if stats is None else stats
+        if 'excluded_boxes' in stats:
+            return [{'box_xyxy':box} if not isinstance(box,dict) else box for box in stats['excluded_boxes']]
+        tracker = getattr(self.perception,'tracker',None)
+        if tracker is None or not hasattr(tracker,'map_instance'):
+            return []
+        from .types import Instance
+        boxes = []
+        for index,item in enumerate(self._excluded):
+            mapped = tracker.map_instance(item['frame_id'],Instance(f'excluded-{index}',tuple(item['box_xyxy']),None,None))
+            if mapped is not None:
+                boxes.append({'box_xyxy':mapped.box_xyxy})
+        return boxes
 
     def run(self):
         window = "Reach"
@@ -348,6 +406,11 @@ class Runner:
                 self.speaker.start()
                 print('Preparing local speech; wait for the camera window before speaking.', flush=True)
                 self.speaker.wait_ready()
+                if self._overlay_recorder:
+                    self.audio.begin_recording(self.run_dir/'output.wav',self.log,
+                        float(self.cfg.get('record',{}).get('audio_ring_s',4)))
+            if self.readback and not self._accepts_results:
+                print('Read-back unavailable: update to the reducer that accepts v4 results before live validation.',flush=True)
             self.perception.start()
             if self.voice:
                 self.voice.start()
@@ -370,6 +433,10 @@ class Runner:
                     raise RuntimeError(camera["error"])
                 if self._fatal or self.audio.stats().get("error"):
                     raise RuntimeError("A processing or audio worker failed")
+                if hasattr(self.audio,'recording_stats'):
+                    recorded = self.audio.recording_stats()
+                    if recorded and recorded.get('error'):
+                        raise RuntimeError('Output recording failed; retain the incomplete take')
                 if self.perception.stats().get("error"):
                     raise RuntimeError("Perception stopped; inspect the local run")
                 if self.args.duration and now-self._started >= self.args.duration:
@@ -407,18 +474,28 @@ class Runner:
                     print(f"fps {camera['capture_fps']:.1f}; hand p95 {metrics['hand']['hand_ms_p95']}; "
                           f"underflows {metrics['audio']['underflows']}", flush=True)
                     last_metrics = now
-                if not self.args.headless and now-last_draw >= 1/30:
+                if (not self.args.headless or self._overlay_recorder) and now-last_draw >= 1/30:
                     stats = {**camera, **self.perception.stats(), **(metrics["hand"] if metrics else {})}
-                    stats.update(voice=self.voice.stats() if self.voice else {'enabled': False},
-                                 speech=self.speaker.stats(), contact=self._contact_signals)
+                    voice_status=self.voice.stats() if self.voice else {'enabled':False}
+                    readback_status=self.readback.stats() if self.readback else {'enabled':False}
+                    stats.update(voice=voice_status,
+                                 speech=self.speaker.stats(), contact=self._contact_signals,
+                                 readback=readback_status,
+                                 excluded_instances=self._excluded_boxes(stats),
+                                 estimated_cost_usd=estimate(self.cfg,stats,voice_status,readback_status)['estimated_usd'])
                     canvas = draw_overlay(image, self._latest_hand, target, self._decision, stats,
                         muted=self._muted, trial=self._trial.lines() if self._trial else None, stale_box=self._last_box)
-                    cv2.imshow(window, canvas)
-                    key = cv2.waitKey(1) if sys.platform == "darwin" else cv2.pollKey()
-                    self._key(key, frame)
-                    if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
-                        break
+                    if self._overlay_recorder:
+                        self._overlay_recorder.submit(canvas,now)
+                    if not self.args.headless:
+                        cv2.imshow(window, canvas)
+                        key = cv2.waitKey(1) if sys.platform == "darwin" else cv2.pollKey()
+                        self._key(key, frame)
+                        if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
+                            break
                     last_draw = now
+                if self._overlay_recorder:
+                    self._overlay_recorder.tick(now)
                 self._stop.wait(.005 if self.args.headless else .001)
             if self._fatal:
                 exit_code = 1
@@ -452,6 +529,14 @@ class Runner:
                 except Exception:
                     self._fatal, exit_code = 'voice cleanup failed', 1
                     self._log_error('voice', 'cleanup', self._fatal)
+            if self.readback:
+                try:
+                    self.readback.stop()
+                except Exception:
+                    self._fatal,exit_code = 'read-back cleanup failed',1
+                    self._log_error('readback','cleanup',self._fatal)
+            if self._overlay_recorder:
+                self._overlay_recorder.stop(self._active_finished)
             metrics = self._metrics()
             metrics["completed"] = exit_code == 0
             try:
@@ -466,6 +551,9 @@ class Runner:
                 self.speaker.poll()
                 self.speaker.stop()
                 self.audio.stop()
+                metrics['recording']['audio'] = self.audio.recording_stats() if hasattr(self.audio,'recording_stats') else None
+                if metrics['recording']['audio'] and metrics['recording']['audio'].get('error'):
+                    metrics['completed'],metrics['error'],exit_code = False,'output recording failed',1
             except Exception:
                 metrics["completed"], metrics["error"], exit_code = False, "audio cleanup failed", 1
             try:

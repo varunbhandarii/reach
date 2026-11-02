@@ -80,8 +80,12 @@ local and do not commit them. Raw microphone audio is not saved.
 `uv run reach report path/to/run` summarizes voice and speech timing, reconnects,
 state durations, contact firings, audio underflows and trial paths.
 Voice latency measures receipt of the server's speech-end event to receipt of
-the complete turn. Tap-to-talk measures the second tap to the final transcript;
-the two measurements have different starting points.
+the complete turn. Reports also separate a local speech-end estimate using
+capture timestamps, calibrated energy in 20 ms subframes and a 200 ms hangover.
+This estimate is not phoneme-aligned ground truth; turns with audio drops,
+overflows or invalid capture timestamps have no valid local latency.
+Tap-to-talk measures the second tap to the final transcript; these measurements
+have different starting points.
 `--camera-latency-ms` adds an earlier measured camera median to a
 component estimate; this is not a measured end-to-end latency distribution.
 
@@ -149,8 +153,39 @@ result or a current lock.
 The deterministic command/session/contact components and local speech engine
 are described in [session integration](docs/session-integration.md).
 `reach replay-contact RUN_DIR --frames` inspects saved box/contact geometry
-without network or device access. Live voice and mixed speech need the runner
-integration to consume these interfaces.
+without network or device access.
 
+## Touched-object read-back and recording
 
-Controller confirmation, spatial selection and deterministic offline replay are documented in [the integration reference](docs/confirmation.md). `reach replay RUN_DIR` verifies recorded inputs/outputs without a camera or API; `--strip OUTPUT_DIR` writes a fresh events-only copy with canonical command text. The live read-back worker and recording adapter are separate integration components.
+With the confirming reducer installed, contact starts a single asynchronous
+standard `muse-spark-1.3` request while the chime plays immediately. The marked
+crop includes the target and hand. Requests explicitly set `store: false` and
+contributor model IDs are refused. Standard mode does not use content for model
+training; disabling response storage does not establish a retention guarantee.
+See Meta's [Responses API](https://dev.meta.ai/docs/protocols/responses) and
+[pricing modes](https://dev.meta.ai/docs/pricing-rate-limits).
+
+`--readback off` disables image read-back. `--spark-cache read` uses saved local
+answers only, including on cache misses. `auto` reads and writes a local cache
+for file sources and disables caching for live sources. The default effort is
+`minimal`, with image detail `low`; API and audio timings are reported separately.
+Use `reach readback-probe crop.jpg --phrase wallet --count 5` to measure a saved
+crop explicitly. This command uploads the crop and prints valid answers and
+errors, rather than opening a device.
+
+`--record` saves `overlay.mp4` at 30 fps and the exact rendered stereo output
+mix as `output.wav`, with their monotonic start times in the log. Keep both
+files to align them in an editor. `--record-format avi` uses MJPEG if the editor
+cannot import MP4. Audio recording uses a bounded writer ring; overruns are
+logged and silence fills lost blocks to preserve the timeline. Recordings and
+read-back caches stay local under ignored `runs/`. Recording requires audio
+output; it does not save raw microphone audio.
+
+The on-screen cost total is an estimate from configured prices, images sent,
+streamed voice seconds and returned Spark token usage. It is not an invoice or
+a statement of available credits.
+
+Controller confirmation, spatial selection and deterministic offline replay are
+documented in [the integration reference](docs/confirmation.md).
+`reach replay RUN_DIR` verifies recorded inputs/outputs without a camera or API;
+`--strip OUTPUT_DIR` writes a fresh events-only copy with canonical command text.

@@ -189,6 +189,13 @@ class CueEngine:
         self._speech_write = self._speech_read = 0
         self._speech_event_drops = 0
         self._muted = False
+        self._recorder = None
+
+    def begin_recording(self,path,log=None,ring_s=4):
+        from .recording import AudioRecorder
+        if not self.running or self._recorder is not None:
+            raise RuntimeError('Start the output stream before recording it once')
+        self._recorder = AudioRecorder(path,self.sample_rate,self._device['blocksize'],log,ring_s)
 
     @property
     def sample_rate(self):
@@ -293,6 +300,15 @@ class CueEngine:
             outdata.fill(0)
             self._callback_errors += 1
             self._error = "audio callback failed"
+        if self._recorder is not None:
+            stamp = time.perf_counter()
+            try:
+                delta = float(timing.outputBufferDacTime)-float(timing.currentTime)
+                if math.isfinite(delta) and 0 <= delta < 2:
+                    stamp += delta
+            except (AttributeError,TypeError,ValueError):
+                pass
+            self._recorder.accept(outdata,stamp)
 
     def stats(self):
         return {"underflows": self._underflows, "callback_errors": self._callback_errors,
@@ -301,6 +317,9 @@ class CueEngine:
                 "ducked": self.ducked, "earcon": self.last_earcon, "device": self._device,
                 "speech_active": self._speech_id is not None, "speech_event_drops": self._speech_event_drops,
                 "error": self._error, "active": bool(self._stream.active) if self._stream else False}
+
+    def recording_stats(self):
+        return self._recorder.stats() if self._recorder is not None else None
 
     def stop(self):
         self.cancel_speech()
@@ -312,3 +331,5 @@ class CueEngine:
             finally:
                 self._stream.close()
                 self._stream = None
+        if self._recorder is not None:
+            self._recorder.stop()

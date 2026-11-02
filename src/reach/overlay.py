@@ -8,6 +8,15 @@ from .controller import target_center
 def draw_overlay(image, hand, target, decision, stats, *, muted=False, trial=None, stale_box=None):
     canvas = image.copy()
     center = target_center(target)
+    if target:
+        for index,instance in enumerate(target.instances):
+            if index != target.chosen:
+                cv2.rectangle(canvas,instance.box_xyxy[:2],instance.box_xyxy[2:],(150,150,150),1)
+                cv2.putText(canvas,str(index+1),instance.box_xyxy[:2],cv2.FONT_HERSHEY_SIMPLEX,.5,(255,255,255),1)
+    for excluded in stats.get('excluded_instances',[]):
+        x0,y0,x1,y1 = excluded['box_xyxy']
+        cv2.line(canvas,(x0,y0),(x1,y1),(0,0,255),2)
+        cv2.line(canvas,(x0,y1),(x1,y0),(0,0,255),2)
     if center is not None:
         box = target.instances[target.chosen].box_xyxy
         color = (0, 220, 0) if target.source == "sam" else (220, 220, 0)
@@ -41,6 +50,13 @@ def draw_overlay(image, hand, target, decision, stats, *, muted=False, trial=Non
         rows.append('Speech unavailable; captions only')
     if contact:
         rows.append(f"Contact: inside={contact.get('inside')} still={contact.get('still')} overlap={contact.get('overlap')}")
+    readback = stats.get('readback',{})
+    result = readback.get('last')
+    if readback.get('busy'):
+        rows.append('Checking touched object...')
+    elif result:
+        label = result.get('error') or ('match' if result.get('matches') is True else 'mismatch' if result.get('matches') is False else 'unsure')
+        rows.append(f"Read-back: {result.get('object_name') or ''} {label} {result.get('latency_ms',0):.0f} ms")
     if stats.get("roll_warning"):
         rows.append("Keep phone level: camera roll exceeds 20 degrees")
     if stats.get("upside_down"):

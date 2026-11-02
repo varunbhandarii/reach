@@ -40,6 +40,10 @@ def parser():
     run.add_argument('--voice-input', help='Microphone name on the native host API')
     run.add_argument('--speech', choices=['on', 'off'], default='on')
     run.add_argument('--contact', choices=['on', 'off'], default='on')
+    run.add_argument('--readback', choices=['on','off'], default='on')
+    run.add_argument('--spark-cache', choices=['off','read','write'])
+    run.add_argument('--record', action='store_true', help='Save local overlay video and stereo output audio')
+    run.add_argument('--record-format', choices=['mp4','avi'], default='mp4')
     run.add_argument('--speech-every', type=float, default=0, help='Optional interval for a local speech load probe')
     run.add_argument("--trial-seed", type=int, default=1)
     run.add_argument("--trial-seconds", type=float, default=45)
@@ -53,6 +57,17 @@ def parser():
     speak.add_argument('--log-dir', type=Path, default=Path('runs/speech'))
     report = commands.add_parser("report", help="Summarize one saved run")
     report.add_argument("run_dir", type=Path)
+    probe = commands.add_parser('readback-probe', help='Measure standard Spark on a saved crop (uploads that image)')
+    probe.add_argument('image', type=Path)
+    probe.add_argument('--phrase', required=True)
+    probe.add_argument('--wrong-image', type=Path, help='Known wrong-object crop for the same requested phrase')
+    probe.add_argument('--config', type=Path)
+    probe.add_argument('--effort', choices=['minimal','low'], default='minimal')
+    probe.add_argument('--detail', choices=['low','auto'], default='low')
+    probe.add_argument('--count', type=int, default=1)
+    probe.add_argument('--matrix', action='store_true', help='Measure both efforts and both detail levels')
+    probe.add_argument('--count-tokens', action='store_true')
+    probe.add_argument('--log-dir', type=Path, default=Path('runs/readback-probe'))
     replay = commands.add_parser("replay-contact", help="Replay contact geometry from a saved local run")
     replay.add_argument("run_dir", type=Path)
     replay.add_argument("--frames", action="store_true")
@@ -97,6 +112,10 @@ def configure(args):
     cfg.setdefault('tts', {})['enabled'] = args.speech == 'on' and not args.mute
     cfg.setdefault('contact', {})['enabled'] = args.contact == 'on'
     cfg.setdefault('brain', {})['prediction'] = args.predict
+    cfg['brain']['readback_enabled'] = args.readback == 'on'
+    cfg.setdefault('spark',{})['enabled'] = args.readback == 'on'
+    if args.spark_cache is not None:
+        cfg['spark']['cache'] = args.spark_cache
     if args.duration < 0 or args.trials < 0 or args.trial_seconds <= 0:
         raise ValueError("Duration and trial counts must be nonnegative, trial time positive")
     if args.camera_latency_ms is not None and args.camera_latency_ms < 0:
@@ -113,6 +132,8 @@ def configure(args):
         raise ValueError('Voice trials require microphone streaming')
     if args.speech_every < 0:
         raise ValueError('Speech interval cannot be negative')
+    if args.record and args.mute:
+        raise ValueError('Recording the output mix requires an active audio stream')
     return cfg
 
 
@@ -168,6 +189,9 @@ def main(argv=None):
             return 0
         if args.command == 'speak':
             return speech_probe(args)
+        if args.command == 'readback-probe':
+            from .spark_probe import probe
+            return probe(args)
         cfg = configure(args)
         from .runner import Runner
         return Runner(cfg, args).run()
