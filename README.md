@@ -189,3 +189,48 @@ Controller confirmation, spatial selection and deterministic offline replay are
 documented in [the integration reference](docs/confirmation.md).
 `reach replay RUN_DIR` verifies recorded inputs/outputs without a camera or API;
 `--strip OUTPUT_DIR` writes a fresh events-only copy with canonical command text.
+
+When a clean pre-reach target crop is available, read-back compares that reference
+with the contact crop. The result answers whether the same physical object was
+touched, so a different name such as "stylus" does not by itself reject a pen.
+Without a clean reference it uses the single-image check and reports that mode.
+`reach readback-probe contact.jpg --reference reference.jpg --phrase pen --count 3`
+explicitly uploads both saved images. Cache identities include both image hashes.
+
+## Scene listing and natural requests
+
+The scene client lists up to six visible objects and their image positions. Its
+worker runs independently of read-back, uses a six-second deadline and keeps a
+local cache for file sources. The default image size is 512 pixels on the long
+side with low detail; `scene.image_long_side` and `scene.detail` are configurable.
+With a describe-capable controller, press **D** or ask "what's on the table?",
+then request one of the listed objects by name.
+
+When the local grammar cannot understand a request, a bounded text-only fallback
+can interpret everyday phrasing or another language. It sends text only when
+there is a request cue or non-ASCII lettering, uses a three-second deadline, and
+never retries automatically. Set `parse.enabled: false` to disable it. Parsed
+commands retain their source and language; a late reply cannot undo a voice stop.
+Windows speech replies stay English. Scene and fallback requests use standard
+Spark with `store: false`, as described in Meta's
+[Responses API](https://dev.meta.ai/docs/protocols/responses).
+
+These features require the shared controller's describe and safety handling.
+Sharp and hot object requests must be refused before grounding or guidance;
+the client modules alone do not implement that refusal. Keep physical checks
+pending until the integrated controller is available and verified.
+
+## Sound display and event timelines
+
+The display shows left/right pan, forward/back pitch, a blinking pulse and an
+ON LINE marker alongside larger speech captions. `--overlay-scale 2` draws text
+and shapes after scaling the camera image, producing a sharp 1280×960 canvas
+from a 640×480 source. Mouse selection still uses source-image coordinates.
+`--record` saves that scaled canvas and the rendered stereo mix locally.
+
+`reach report RUN_DIR --html timeline.html` exports a self-contained HTML/SVG
+timeline with state, distance, pan, pitch, commands, speech, model activity,
+contact and trial lanes. Hover over bars or open the event table for details.
+The report labels latency origins and omits raw microphone transcripts. Stripped
+events-only runs work without devices, image files or API access; missing
+measurements remain visibly absent.

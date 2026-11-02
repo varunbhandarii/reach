@@ -119,7 +119,7 @@ class SamClient:
         key = self._key or os.environ.get("MODEL_API_KEY")
         if not key:
             raise SamPermanentError("MODEL_API_KEY is not configured")
-        body = json.dumps({"model": self.model, "stream": True,
+        body = json.dumps({"model": self.model, "stream": True, "store": False,
             "metadata": {"mask_encoding": "one_bit", "include_confidence": "true"},
             "input": [{"type": "message", "role": "user", "content": [
                 {"type": "input_text", "text": phrase},

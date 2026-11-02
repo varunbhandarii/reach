@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .brain import Brain
 from .session_codec import plain, replay_config, restore_inputs
-from .types import Effect
+from .types import CONTRACT_VERSION, Command, Effect, ReadBack
 
 
 class ReplayError(ValueError):
@@ -63,6 +63,12 @@ def _load(root):
         raise ReplayError('Replay inputs need a saved manifest.json') from None
     if not isinstance(manifest,dict) or not isinstance(manifest.get('config'),dict):
         raise ReplayError('Replay inputs need manifest.config with the reducer settings')
+    if manifest.get('contract_version') in ('3','4'):
+        # Old snapshots omit newly optional message fields. Restore their defaults
+        # in memory so wrapper-effect comparisons stay meaningful across versions.
+        for incoming,_ in pairs:
+            incoming['commands']=[plain(Command(**row)) for row in incoming.get('commands',())]
+            incoming['results']=[plain(ReadBack(**row)) for row in incoming.get('results',())]
     return manifest,pairs,decisions
 
 
@@ -92,7 +98,7 @@ def _strip(output,manifest,pairs):
         outgoing=effects[-1].payload
         rows.extend(_emit_rows(incoming,outgoing,actual))
     output.mkdir(parents=True)
-    safe=dict(config=cfg,objects=objects,contract_version='4',source='events_only',replay_only=True)
+    safe=dict(config=cfg,objects=objects,contract_version=CONTRACT_VERSION,source='events_only',replay_only=True)
     (output/'manifest.json').write_text(json.dumps(safe,indent=2,allow_nan=False)+'\n',encoding='utf-8')
     with (output/'events.jsonl').open('w',encoding='utf-8') as stream:
         for seq,row in enumerate(rows):

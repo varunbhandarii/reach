@@ -43,6 +43,22 @@ def test_synthetic_voice_contact_readback_replays_without_devices(tmp_path):
     assert result['state_changes']>=4 and result['readbacks']==1
 
 
+def test_old_optional_wire_fields_restore_without_rewriting_evidence(tmp_path):
+    root=trace(tmp_path/'run')
+    manifest=json.loads((root/'manifest.json').read_text());manifest['contract_version']='4'
+    (root/'manifest.json').write_text(json.dumps(manifest))
+    rows=[json.loads(s) for s in (root/'events.jsonl').read_text().splitlines()]
+    for row in rows:
+        if row['type']=='brain_in':
+            for command in row['data']['commands']:command.pop('language',None)
+            for result in row['data']['results']:
+                result.pop('same_object',None);result.pop('mode',None)
+    (root/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows)+'\n')
+    before=(root/'events.jsonl').read_bytes()
+    assert replay_session(root)['status']=='ok'
+    assert (root/'events.jsonl').read_bytes()==before
+
+
 @pytest.mark.parametrize('kind',['decision','brain_out'])
 def test_first_divergence_identifies_edited_field(tmp_path,kind):
     root=trace(tmp_path/'run')
