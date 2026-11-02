@@ -32,7 +32,7 @@ def test_voice_contact_readback_runner_replays_exactly(tmp_path):
         return httpx2.Response(200,json={'id':'synthetic','object':'response','created_at':0,'status':'completed',
             'output':[{'type':'message','id':'msg','role':'assistant','status':'completed','content':[
                 {'type':'output_text','annotations':[],'text':json.dumps({'matches_request':True,
-                    'object_name':'wallet','hint':'','confidence':.9})}]}],
+                    'object_name':'wallet','same_object':True,'hint':'','confidence':.9})}]}],
             'usage':{'input_tokens':100,'output_tokens':50,'total_tokens':150}})
     def client(cfg,log):
         cfg={**cfg,'spark':{**cfg['spark'],'cache':'off'}}

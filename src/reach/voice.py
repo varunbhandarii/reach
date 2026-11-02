@@ -18,6 +18,7 @@ from websockets.exceptions import ConnectionClosed
 from .config import PROJECT_ROOT
 from .types import Command
 from .voice_endpoint import EnergyEndpoint, capture_end_time
+from .spark_services import ParseClient, should_parse
 
 URI = 'wss://api.meta.ai/v1/asr/realtime'
 
@@ -58,7 +59,7 @@ def select_input(cfg):
 class VoiceClient:
     def __init__(self, cfg, log, post, *, parser=None, audio_source=None, uri=URI,
                  api_key=None, stream_factory=None, on_speech_start=None, speaking=None,
-                 output_probe=None, clock=time.perf_counter):
+                 output_probe=None, clock=time.perf_counter, parse_factory=ParseClient,on_parse_notice=None):
         self.root_cfg, self.cfg = cfg, cfg.get('voice', {})
         self.log, self.post = log, post
         self._parser, self._audio_source, self._uri, self._key = parser, audio_source, uri, api_key
@@ -86,6 +87,11 @@ class VoiceClient:
         self._ptt_latency = deque(maxlen=100)
         self._ptt_started = self._ptt_finished = None
         self._ptt_pending = False
+        self._parse_client=parse_factory(cfg,log) if cfg.get('parse',{}).get('enabled',True) else None
+        self._parse_epoch=self._parse_id=0
+        self._parse_pending={}
+        self._parse_notice=False
+        self._on_parse_notice=on_parse_notice
 
     def _emit(self, kind, data):
         if self.log is not None:
@@ -267,7 +273,42 @@ class VoiceClient:
         return replace(command, **fields)
 
     def _post(self, command):
+        if command.kind=='unknown' and self._parse_client and should_parse(command.transcript):
+            self._parse_epoch+=1
+            self._parse_id+=1
+            self._parse_pending.clear()
+            self._parse_pending[self._parse_id]=(command,self._parse_epoch)
+            self._parse_client.request(self._parse_id,command.transcript)
+            return
+        if command.kind!='unknown':
+            self._parse_epoch+=1
+            self._parse_pending.clear()
         self.post(command)
+
+    def _poll_parse(self):
+        if self._parse_client is None:
+            return
+        for result in self._parse_client.poll():
+            pending=self._parse_pending.pop(result.request_id,None)
+            if pending is None or pending[1]!=self._parse_epoch or result.error:
+                continue
+            original,_=pending
+            if result.intent=='none':
+                if not self._parse_notice and self._on_parse_notice:
+                    self._on_parse_notice()
+                    self._parse_notice=True
+                continue
+            extra={'source':'spark_parse'}
+            if 'language' in Command.__dataclass_fields__:
+                extra['language']=result.language
+            command=Command(result.intent,result.target_phrase if result.intent=='find' else None,
+                original.transcript,original.turn_id,self._clock(),**extra)
+            self._emit('nl_parse',{'event':'accepted','request_id':result.request_id,'intent':result.intent,
+                'target_phrase':result.target_phrase,'spoken_phrase':result.spoken_phrase,
+                'language':result.language,'latency_ms':result.latency_ms})
+            self.post(command)
+            self._parse_epoch+=1
+            self._parse_pending.clear()
 
     async def _endpoint_session(self):
         async with websockets.connect(self._uri, open_timeout=10, max_size=2**20, close_timeout=3) as ws:
@@ -366,6 +407,7 @@ class VoiceClient:
 
             async def control():
                 while not self._stop_event.is_set():
+                    self._poll_parse()
                     if self._clock()-opened >= float(self.cfg.get('rotate_min', 55))*60 and not self._active_turns and not self._ptt_pending:
                         return 'rotate'
                     await asyncio.sleep(.05)
@@ -398,7 +440,7 @@ class VoiceClient:
         values = tuple(self._latencies)
         local = tuple(self._local_latencies)
         ptt = tuple(self._ptt_latency)
-        return {'connected': self._connected, 'sessions': self._sessions, 'reconnects': self._reconnects,
+        return {'parse':self._parse_client.stats() if self._parse_client else {},'connected': self._connected, 'sessions': self._sessions, 'reconnects': self._reconnects,
                 'turns': self._turns, 'dropped_frames': self._dropped, 'input_overflows': self._overflows,
                 'last_close_code': self._last_code, 'latency_p50_ms': float(np.median(values)) if values else None,
                 'latency_p95_ms': float(np.percentile(values, 95)) if values else None,
@@ -504,3 +546,5 @@ class VoiceClient:
             if self._thread.is_alive():
                 raise RuntimeError('Voice client did not stop within its deadline')
         self.running = False
+        if self._parse_client:
+            self._parse_client.stop()

@@ -16,6 +16,7 @@ def probe(args):
     if not 1 <= args.count <= 20:
         raise ValueError('Probe count must be between 1 and 20')
     cfg = load_config(args.config)
+    reference=args.reference.read_bytes() if args.reference else None
     images = [('correct',args.image,True)] if args.wrong_image else [('unrated',args.image,None)]
     if args.wrong_image:
         images.append(('wrong',args.wrong_image,False))
@@ -34,13 +35,13 @@ def probe(args):
                     jpeg = path.read_bytes()
                     if args.count_tokens and detail not in counted:
                         try:
-                            tokens = client.count_tokens(jpeg,args.phrase)
+                            tokens = client.count_tokens(jpeg,args.phrase,reference_jpeg=reference)
                             token_counts.append({'detail':detail,'response':tokens})
                         except Exception as exc:
                             token_counts.append({'detail':detail,'error':f'token count failed ({type(exc).__name__})'})
                         counted.add(detail)
                     for _ in range(args.count):
-                        client.request(len(rows)+1,jpeg,args.phrase,0)
+                        client.request(len(rows)+1,jpeg,args.phrase,0,reference_jpeg=reference)
                         while client.stats()['busy']:
                             time.sleep(.005)
                         result, = client.poll()

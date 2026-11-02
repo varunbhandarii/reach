@@ -3,7 +3,7 @@
 from dataclasses import fields, is_dataclass
 import math
 
-from .types import Command, HandObs, Instance, ReadBack, TargetObs
+from .types import Command, HandObs, Instance, ReadBack, SceneList, TargetObs
 
 
 def plain(value):
@@ -56,6 +56,7 @@ def restore_inputs(data):
         target = TargetObs(**target)
     return dict(hand=hand, target=target, perception_stats=data.get('perception_stats', {}),
                 commands=tuple(Command(**row) for row in data.get('commands', ())),
-                results=tuple(ReadBack(**row) for row in data.get('results', ())),
+                results=tuple(SceneList(**{**row,'objects':tuple(tuple(item) for item in row['objects'])})
+                              if 'objects' in row else ReadBack(**row) for row in data.get('results', ())),
                 speaking=data.get('speaking', False), frame_size=tuple(data.get('frame_size', (640,480))),
                 flipped=data.get('flipped', False))

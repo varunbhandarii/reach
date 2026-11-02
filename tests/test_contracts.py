@@ -15,6 +15,7 @@ from reach.types import (
     Instance,
     TargetObs,
     ReadBack,
+    SceneList,
 )
 
 
@@ -57,3 +58,11 @@ def test_contract_round_trips_through_json(sample):
     decoded = json.loads(encoded)
 
     assert _restore(decoded, sample) == sample
+
+
+def test_scene_and_optional_command_fields_restore_through_session_codec():
+    from reach.session_codec import plain,restore_inputs
+    scene=SceneList(7,10,(('pen','left'),),12)
+    command=Command('find','pen','pen',1,0,'spark_parse','hi')
+    result=restore_inputs({'results':[plain(scene)],'commands':[plain(command)]})
+    assert result['results']==(scene,) and result['commands']==(command,)

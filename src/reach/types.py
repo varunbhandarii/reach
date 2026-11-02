@@ -14,10 +14,10 @@ Log effects use key=event type and payload=flat event data.
 from dataclasses import dataclass
 from typing import Literal
 
-CONTRACT_VERSION = "4"
+CONTRACT_VERSION = "5"
 Source = Literal["android_mjpeg", "iphone_continuity", "usb_webcam", "file"]
 CommandKind = Literal[
-    "find", "choose", "cancel", "start_over", "repeat", "recheck", "yes", "no", "stop", "unknown"
+    "find", "choose", "cancel", "start_over", "repeat", "recheck", "yes", "no", "stop", "unknown", "describe"
 ]
 
 
@@ -70,7 +70,8 @@ class Command:
     transcript: str
     turn_id: int | None
     t_mono: float
-    source: Literal["voice", "voice_fast", "ptt", "key", "trial"] = "voice"
+    source: Literal["voice", "voice_fast", "ptt", "key", "trial", "spark_parse"] = "voice"
+    language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,7 @@ class Decision:
 
 @dataclass(frozen=True)
 class Effect:
-    kind: Literal["speak", "cancel_speech", "earcon", "set_phrase", "force_query", "perception_state", "log", "readback", "choose_instance", "exclude_instance"]
+    kind: Literal["speak", "cancel_speech", "earcon", "set_phrase", "force_query", "perception_state", "log", "readback", "choose_instance", "exclude_instance", "describe"]
     text: str | None = None
     key: str | None = None
     priority: int = 0
@@ -116,5 +117,16 @@ class ReadBack:
     object_name: str | None
     hint: str | None
     confidence: float | None
+    latency_ms: float | None
+    error: str | None = None
+    same_object: bool | None = None
+    mode: Literal["pair", "single"] | None = None
+
+
+@dataclass(frozen=True)
+class SceneList:
+    request_id: int
+    frame_id: int
+    objects: tuple[tuple[str,str], ...]
     latency_ms: float | None
     error: str | None = None

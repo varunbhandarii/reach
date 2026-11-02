@@ -33,12 +33,14 @@ from .spark import ReadBackClient, make_crop
 from .costs import estimate
 from .recording import OverlayRecorder
 from .session_codec import replay_config
+from .reference import capture_reference
+from .spark import SceneClient
 
 
 class Runner:
     def __init__(self, cfg, args, *, camera_factory=Camera, hand_factory=HandTracker,
                  audio_factory=CueEngine, perception_factory=Perception, brain_factory=None,
-                 voice_factory=VoiceClient, speaker_factory=Speaker, readback_factory=ReadBackClient):
+                 voice_factory=VoiceClient, speaker_factory=Speaker, readback_factory=ReadBackClient,scene_factory=SceneClient):
         self.cfg, self.args = cfg, args
         self._resume = None
         retained = []
@@ -61,6 +63,8 @@ class Runner:
         self.audio = audio_factory(cfg)
         self.log = EventLog(self.run_dir, save_frames=cfg.get("log", {}).get("save_frames", True))
         self.readback = readback_factory(cfg,self.log) if cfg.get('spark',{}).get('enabled',True) else None
+        self.scene=scene_factory(cfg,self.log)
+        self._reference=None
         self._hand_history = deque(maxlen=int(cfg.get('camera',{}).get('ring_depth',90)))
         self._excluded = []
         self._disabled_results = []
@@ -71,7 +75,8 @@ class Runner:
         self.speaker = (speaker_factory if cfg.get('tts', {}).get('enabled', True) and not args.mute else SilentSpeaker)(cfg, self.audio, self.log)
         self.voice = (voice_factory(cfg, self.log, self.post_command,
             on_speech_start=lambda: self.speaker.cancel(info_only=True), speaking=lambda: self.speaker.busy,
-            output_probe=self._output_probe) if cfg.get('voice', {}).get('enabled', False) else None)
+            output_probe=self._output_probe,on_parse_notice=lambda:self.speaker.say(
+                'Sorry, say find and the object.',key='parse_help',priority=0)) if cfg.get('voice', {}).get('enabled', False) else None)
         try:
             self.perception = perception_factory(cfg, self.camera, self.log)
         except Exception:
@@ -160,6 +165,7 @@ class Runner:
                 if effect.key == 'contact' and self._trial:
                     self._trial.note_contact(now)
             elif effect.kind == 'set_phrase':
+                self._reference=None
                 if effect.text != getattr(self,'_excluded_phrase',None):
                     self._excluded = []
                     self._excluded_phrase = effect.text
@@ -187,18 +193,33 @@ class Runner:
                     except (ValueError,TypeError,cv2.error):
                         self.readback.fail(payload['request_id'],payload['frame_id'],payload['phrase'],'image_missing')
                     else:
-                        self.readback.request(payload['request_id'],jpeg,payload['phrase'],payload['frame_id'])
+                        reference=self._reference
+                        reference_jpeg=reference['jpeg'] if reference and reference['phrase']==payload['phrase'] else None
+                        if reference_jpeg:
+                            self.readback.request(payload['request_id'],jpeg,payload['phrase'],payload['frame_id'],reference_jpeg=reference_jpeg)
+                        else:
+                            self.readback.request(payload['request_id'],jpeg,payload['phrase'],payload['frame_id'])
                 else:
                     # Explicit off mode returns an error result to close confirming gracefully.
                     from .types import ReadBack
                     self._disabled_results.append(ReadBack(payload['request_id'],payload['frame_id'],payload['phrase'],
                         None,None,None,None,0.,'disabled'))
             elif effect.kind == 'choose_instance':
+                self._reference=None
                 self.perception.choose(effect.payload['sam_id'])
             elif effect.kind == 'exclude_instance':
+                self._reference=None
                 payload = effect.payload
                 self.perception.exclude(payload['frame_id'],payload['box_xyxy'])
                 self._excluded.append(dict(payload))
+            elif effect.kind == 'describe':
+                value=self.camera.latest()
+                if value is not None:
+                    current,image=value
+                    if now-current.t_mono<=.5:
+                        from .spark_images import encode_frame
+                        jpeg=encode_frame(image,int(self.cfg.get('scene',{}).get('image_long_side',512)))
+                        self.scene.request(effect.payload['request_id'],jpeg,current.id)
             elif effect.kind == 'log':
                 kind,data = effect.key, effect.payload or {}
                 self.log.emit(kind, data)
@@ -222,14 +243,19 @@ class Runner:
             hand, target = None, None
         if self._click_mode and target is not None:
             target = replace(target, phrase='clicked point')
+        reference_hand=hand
         if self._trial and self._trial.prepared and self._trial.started is None:
             hand = None  # Contact is disarmed until the timed trial starts.
+        if frame is not None and now-frame.t_mono<=.5:
+            self._reference=capture_reference(self.camera,target,reference_hand,now,self._reference,
+                int(self.cfg.get('spark',{}).get('image_long_side',512)))
         stats = self.perception.stats()
         voice = self.voice.stats() if self.voice else {'connected': True, 'stereo_ok': True}
         stats.update(voice_connected=voice['connected'], voice_online=voice['connected'], voice_offline=not voice['connected'])
         if flipped is None:
             flipped = self.args.flip == 'on' or (self.args.flip == 'auto' and self.hand.upside_down)
         results = self.readback.poll() if self.readback else list(self._disabled_results)
+        results.extend(self.scene.poll())
         self._disabled_results.clear()
         extra = {'results':tuple(results)} if self._accepts_results else {}
         decision, effects = self.brain.step(now, hand=hand, target=target, perception_stats=stats,
@@ -308,6 +334,8 @@ class Runner:
             return
         if event == cv2.EVENT_LBUTTONDOWN:
             self.audio.set(None)
+            scale=getattr(getattr(self,'args',None),'overlay_scale',1)
+            x,y=x/scale,y/scale
             self.select_point(x, y)
             self.log.emit("ui", {"click": [x, y]})
 
@@ -337,6 +365,8 @@ class Runner:
             self._select_phrase(None)
         elif key == ord('v') and self.voice:
             self.voice.toggle_ptt()
+        elif key == ord('d') and not self._trial:
+            self.post_command(make_command('describe'))
         elif self._trial:
             if key == ord("r"):
                 self.post_command(make_command('recheck'))
@@ -355,11 +385,14 @@ class Runner:
         perception = self.perception.stats()
         voice = self.voice.stats() if self.voice else {'enabled':False}
         readback = self.readback.stats() if self.readback else {'enabled':False}
-        cost = estimate(self.cfg,perception,voice,readback)
+        scene=self.scene.stats()
+        services=[readback,scene,voice.get('parse',{})]
+        usage={key:sum(s.get(key,0) for s in services) for key in ('cost_usd','input_tokens','output_tokens')}
+        cost = estimate(self.cfg,perception,voice,usage)
         return {"duration_s": elapsed, "capture": camera, "hand": hand,
                 "voice": self.voice.stats() if self.voice else {'enabled': False},
                 "speech": self.speaker.stats(), "contact": self._contact_signals,
-                "perception": perception, "audio": audio,"readback":readback,"cost":cost,
+                "perception": perception, "audio": audio,"readback":readback,"scene":scene,"cost":cost,
                 "recording": {'video':self._overlay_recorder.stats() if self._overlay_recorder else None,
                               'audio':self.audio.recording_stats() if hasattr(self.audio,'recording_stats') else None},
                 "controller_hz": self._decision_count/elapsed, "motion_to_sound_estimate_ms": latency,
@@ -478,13 +511,19 @@ class Runner:
                     stats = {**camera, **self.perception.stats(), **(metrics["hand"] if metrics else {})}
                     voice_status=self.voice.stats() if self.voice else {'enabled':False}
                     readback_status=self.readback.stats() if self.readback else {'enabled':False}
+                    scene_status=self.scene.stats()
+                    usage=[readback_status,scene_status,voice_status.get('parse',{})]
+                    spark_usage={key:sum(s.get(key,0) for s in usage)
+                                 for key in ('cost_usd','input_tokens','output_tokens')}
                     stats.update(voice=voice_status,
                                  speech=self.speaker.stats(), contact=self._contact_signals,
                                  readback=readback_status,
+                                 scene=scene_status,
                                  excluded_instances=self._excluded_boxes(stats),
-                                 estimated_cost_usd=estimate(self.cfg,stats,voice_status,readback_status)['estimated_usd'])
+                                 estimated_cost_usd=estimate(self.cfg,stats,voice_status,spark_usage)['estimated_usd'])
                     canvas = draw_overlay(image, self._latest_hand, target, self._decision, stats,
-                        muted=self._muted, trial=self._trial.lines() if self._trial else None, stale_box=self._last_box)
+                        muted=self._muted, trial=self._trial.lines() if self._trial else None, stale_box=self._last_box,
+                        scale=self.args.overlay_scale,now=now)
                     if self._overlay_recorder:
                         self._overlay_recorder.submit(canvas,now)
                     if not self.args.headless:
@@ -535,6 +574,11 @@ class Runner:
                 except Exception:
                     self._fatal,exit_code = 'read-back cleanup failed',1
                     self._log_error('readback','cleanup',self._fatal)
+            try:
+                self.scene.stop()
+            except Exception:
+                self._fatal,exit_code='scene cleanup failed',1
+                self._log_error('scene','cleanup',self._fatal)
             if self._overlay_recorder:
                 self._overlay_recorder.stop(self._active_finished)
             metrics = self._metrics()

@@ -12,7 +12,7 @@ import pytest
 from reach.spark import ReadBackClient, make_crop, validate_answer
 
 
-ANSWER = {'matches_request':True,'object_name':'wallet','confidence':.9,'hint':''}
+ANSWER = {'matches_request':True,'same_object':True,'object_name':'wallet','confidence':.9,'hint':''}
 
 
 def factory(handler):
@@ -53,7 +53,7 @@ def test_request_schema_privacy_cache_and_usage(tmp_path):
     assert finish(read)[0].error=='cache_miss'
     # Image bytes, phrase, effort, detail and prompt version all affect cache identity.
     original=read._path(read._identity(b'jpeg','wallet'))
-    for key,value in [('reasoning_effort','low'),('detail','auto'),('prompt_version','2')]:
+    for key,value in [('reasoning_effort','low'),('detail','auto'),('prompt_version','3')]:
         changed=ReadBackClient({'spark':{key:value,'cache_dir':str(tmp_path)}})
         assert changed._path(changed._identity(b'jpeg','wallet'))!=original
     assert read._path(read._identity(b'jpeg','pen'))!=original
