@@ -66,6 +66,7 @@ class Runner:
         self.scene=scene_factory(cfg,self.log)
         self._reference=None
         self._hand_history = deque(maxlen=int(cfg.get('camera',{}).get('ring_depth',90)))
+        self._reference_hands=deque(maxlen=self._hand_history.maxlen)
         self._excluded = []
         self._disabled_results = []
         self._overlay_recorder = (OverlayRecorder(self.run_dir/('overlay.'+args.record_format),
@@ -146,6 +147,10 @@ class Runner:
             self.log.emit('command', {**asdict(command), 'ignored_for_trial': True,
                                      'reason': 'scripted target is authoritative'})
             return
+        voice=getattr(self,'voice',None)
+        if (voice and hasattr(voice,'invalidate_parse') and command.source!='spark_parse'
+                and command.kind in ('stop','cancel','start_over','find','describe')):
+            voice.invalidate_parse()
         self.inbox.post(command)
 
     def select_point(self, x, y):
@@ -243,7 +248,8 @@ class Runner:
             hand, target = None, None
         if self._click_mode and target is not None:
             target = replace(target, phrase='clicked point')
-        reference_hand=hand
+        reference_hand=next((obs for obs,held in reversed(self._reference_hands)
+            if target is not None and obs.frame_id==target.frame_id and not held),None)
         if self._trial and self._trial.prepared and self._trial.started is None:
             hand = None  # Contact is disarmed until the timed trial starts.
         if frame is not None and now-frame.t_mono<=.5:
@@ -292,6 +298,7 @@ class Runner:
                 now = time.perf_counter()
                 self._latest_hand, self._hand_stamp = hand, now
                 self._hand_history.append(hand)
+                self._reference_hands.append((hand,bool(self.hand.held)))
                 self.perception.on_hand(hand)
                 flipped = self.args.flip == "on" or (self.args.flip == "auto" and self.hand.upside_down)
                 # A blocked or delayed detector must not emit old guidance.

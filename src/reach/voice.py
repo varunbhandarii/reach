@@ -89,6 +89,7 @@ class VoiceClient:
         self._ptt_pending = False
         self._parse_client=parse_factory(cfg,log) if cfg.get('parse',{}).get('enabled',True) else None
         self._parse_epoch=self._parse_id=0
+        self._parse_lock=threading.RLock()
         self._parse_pending={}
         self._parse_notice=False
         self._on_parse_notice=on_parse_notice
@@ -273,42 +274,47 @@ class VoiceClient:
         return replace(command, **fields)
 
     def _post(self, command):
-        if command.kind=='unknown' and self._parse_client and should_parse(command.transcript):
+        with self._parse_lock:
+            if command.kind=='unknown' and self._parse_client and should_parse(command.transcript):
+                self.invalidate_parse()
+                self._parse_id+=1
+                self._parse_pending[self._parse_id]=(command,self._parse_epoch)
+                self._parse_client.request(self._parse_id,command.transcript)
+                return
+            if command.kind!='unknown':
+                self.invalidate_parse()
+            self.post(command)
+
+    def invalidate_parse(self):
+        """Serialize external stop/cancel against acceptance of a parsed reply."""
+        with self._parse_lock:
             self._parse_epoch+=1
-            self._parse_id+=1
             self._parse_pending.clear()
-            self._parse_pending[self._parse_id]=(command,self._parse_epoch)
-            self._parse_client.request(self._parse_id,command.transcript)
-            return
-        if command.kind!='unknown':
-            self._parse_epoch+=1
-            self._parse_pending.clear()
-        self.post(command)
 
     def _poll_parse(self):
         if self._parse_client is None:
             return
         for result in self._parse_client.poll():
-            pending=self._parse_pending.pop(result.request_id,None)
-            if pending is None or pending[1]!=self._parse_epoch or result.error:
-                continue
-            original,_=pending
-            if result.intent=='none':
-                if not self._parse_notice and self._on_parse_notice:
-                    self._on_parse_notice()
-                    self._parse_notice=True
-                continue
-            extra={'source':'spark_parse'}
-            if 'language' in Command.__dataclass_fields__:
-                extra['language']=result.language
-            command=Command(result.intent,result.target_phrase if result.intent=='find' else None,
-                original.transcript,original.turn_id,self._clock(),**extra)
-            self._emit('nl_parse',{'event':'accepted','request_id':result.request_id,'intent':result.intent,
-                'target_phrase':result.target_phrase,'spoken_phrase':result.spoken_phrase,
-                'language':result.language,'latency_ms':result.latency_ms})
-            self.post(command)
-            self._parse_epoch+=1
-            self._parse_pending.clear()
+            with self._parse_lock:
+                pending=self._parse_pending.pop(result.request_id,None)
+                if pending is None or pending[1]!=self._parse_epoch or result.error:
+                    continue
+                original,_=pending
+                if result.intent=='none':
+                    if not self._parse_notice and self._on_parse_notice:
+                        self._on_parse_notice()
+                        self._parse_notice=True
+                    continue
+                extra={'source':'spark_parse'}
+                if 'language' in Command.__dataclass_fields__:
+                    extra['language']=result.language
+                command=Command(result.intent,result.target_phrase if result.intent=='find' else None,
+                    original.transcript,original.turn_id,self._clock(),**extra)
+                self._emit('nl_parse',{'event':'accepted','request_id':result.request_id,'intent':result.intent,
+                    'target_phrase':result.target_phrase,'spoken_phrase':result.spoken_phrase,
+                    'language':result.language,'latency_ms':result.latency_ms})
+                self.post(command)
+                self.invalidate_parse()
 
     async def _endpoint_session(self):
         async with websockets.connect(self._uri, open_timeout=10, max_size=2**20, close_timeout=3) as ws:

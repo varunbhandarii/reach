@@ -1,7 +1,5 @@
 """Conservative pre-reach reference capture; never refresh through hand occlusion."""
 
-import math
-
 from .spark import make_crop
 
 
@@ -27,6 +25,8 @@ def capture_reference(camera,target,hand,now,previous=None,long_side=512):
     if previous and (previous['sam_id']!=item.sam_id or previous['phrase']!=target.phrase):
         previous=None
     if previous and now-previous['t_mono']<.5:
+        return previous
+    if hand is None or hand.frame_id!=target.frame_id:
         return previous
     if not clean_target_box(hand,item.box_xyxy):
         return previous

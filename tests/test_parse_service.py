@@ -55,6 +55,24 @@ def test_late_fallback_find_cannot_undo_stop():
     assert [c.kind for c in posted]==['stop']
 
 
+def test_keyboard_cancel_invalidates_pending_voice_fallback():
+    from reach.runner import Runner
+    class Fake:
+        def __init__(self,*args):self.rows=[]
+        def request(self,ident,text):self.ident=ident
+        def poll(self):rows,self.rows=self.rows,[];return rows
+        def stop(self):pass
+    runner=Runner.__new__(Runner);runner._trial=None
+    posted=[];runner.inbox=NS(post=posted.append)
+    voice=VoiceClient({},None,runner.post_command,parse_factory=Fake);runner.voice=voice
+    voice._post(Command('unknown',None,'help me find glasses',1,1))
+    ident=voice._parse_client.ident
+    runner.post_command(Command('cancel',None,'cancel',None,2,'key'))
+    voice._parse_client.rows=[ParsedRequest(ident,'find','glasses','glasses','en',100)]
+    voice._poll_parse()
+    assert [c.kind for c in posted]==['cancel']
+
+
 def test_timeout_posts_nothing_and_help_notice_is_once():
     posted,notices=[],[]
     class Fake:

@@ -73,6 +73,16 @@ def test_clean_reference_rate_limit_and_occlusion():
     assert capture_reference(camera,target,covered,2,first) is first
 
 
+def test_reference_requires_an_observation_of_the_same_image():
+    camera=NS(get=lambda frame:np.zeros((100,100,3),np.uint8))
+    target=TargetObs(1,'wallet',(Instance('a',(20,20,60,60),.9,None),),0,'sam',0)
+    newer=HandObs(2,False,None,None,(),(0,0),0)
+    assert capture_reference(camera,target,newer,1) is None
+    assert capture_reference(camera,target,None,1) is None
+    observed_absent=HandObs(1,False,None,None,(),(0,0),0)
+    assert capture_reference(camera,target,observed_absent,1) is not None
+
+
 @pytest.mark.parametrize('effect',[Effect('set_phrase',text='pen'),
     Effect('choose_instance',payload={'sam_id':'other'}),
     Effect('exclude_instance',payload={'frame_id':1,'box_xyxy':(1,2,3,4)})])
