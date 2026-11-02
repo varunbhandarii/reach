@@ -1,4 +1,5 @@
 from string import Formatter
+import pytest
 
 from reach.brain import Brain
 from reach.phrases import table, translate, speech_language
@@ -80,3 +81,19 @@ def test_stripped_replay_removes_spoken_alias_as_well_as_transcript(tmp_path):
     content = (tmp_path/'stripped/events.jsonl').read_text()
     assert 'private spoken alias' not in content and 'private recording words' not in content
     assert replay_session(tmp_path/'stripped')['status'] == 'ok'
+
+
+@pytest.mark.parametrize('english,expected',[(None,'LegacyVoice'),('NamedEnglish','NamedEnglish')])
+def test_english_voice_map_keeps_the_existing_voice_preference(english,expected):
+    from reach.tts import Speaker,NullEngine
+    from test_tts import engine
+    selected=[]
+    class Fake(NullEngine):
+        def __init__(self,cfg):selected.append(cfg.get('voice'))
+    speaker=Speaker({'objects':[],'tts':{'voice':'LegacyVoice','voices':{'en':english}}},
+                    engine(),engine_factory=Fake)
+    try:
+        assert speaker.wait_ready(timeout=2)
+        assert selected==[expected]
+    finally:
+        speaker.stop()

@@ -283,7 +283,7 @@ class Speaker:
                 name = ('sapi' if sys.platform == 'win32' else 'say' if sys.platform == 'darwin' else 'null') if name == 'auto' else name
                 factory = {'sapi': SapiEngine, 'say': SayEngine, 'null': NullEngine}[name]
             try:
-                engines['en'] = factory({**self.cfg, 'voice': self.cfg.get('voices', {}).get('en', self.cfg.get('voice'))})
+                engines['en'] = factory({**self.cfg, 'voice': self.cfg.get('voices', {}).get('en') or self.cfg.get('voice')})
             except Exception as exc:
                 self._fallback = True
                 self._error = f'Local speech unavailable ({type(exc).__name__}); captions remain available'
@@ -314,7 +314,7 @@ class Speaker:
                     engines[language] = factory({**self.cfg, 'voice': voice})
                 engine = engines[language]
                 rate = self.audio.sample_rate
-                voice = self.cfg.get('voices', {}).get(language, self.cfg.get('voice'))
+                voice = self.cfg.get('voices', {}).get(language) or self.cfg.get('voice')
                 cache_key = (language, engine.name, voice, self.cfg.get('rate', 210), rate, text)
                 start = self._clock()
                 cached = cache_key in self._cache
