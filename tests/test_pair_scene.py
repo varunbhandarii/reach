@@ -83,6 +83,21 @@ def test_reference_requires_an_observation_of_the_same_image():
     assert capture_reference(camera,target,observed_absent,1) is not None
 
 
+def test_query_id_change_preserves_clean_reference_through_occlusion():
+    from dataclasses import replace
+    camera=NS(get=lambda frame:np.zeros((100,100,3),np.uint8))
+    target=TargetObs(1,'bottle',(Instance('0',(20,20,60,60),.9,None),),0,'sam',0)
+    clear=HandObs(1,False,None,None,(),(0,0),0)
+    first=capture_reference(camera,target,clear,1)
+    refreshed=replace(target,frame_id=2,instances=(replace(target.instances[0],sam_id='1'),))
+    covered=HandObs(2,True,(40,40),None,((20,20),(70,70)),(0,0),1)
+    assert capture_reference(camera,refreshed,covered,2,first) is first
+    assert capture_reference(camera,replace(refreshed,phrase='mug'),covered,2,first) is None
+    clear=replace(clear,frame_id=2)
+    latest=capture_reference(camera,refreshed,clear,2,first)
+    assert latest['frame_id']==2 and latest['sam_id']=='1' and latest is not first
+
+
 @pytest.mark.parametrize('effect',[Effect('set_phrase',text='pen'),
     Effect('choose_instance',payload={'sam_id':'other'}),
     Effect('exclude_instance',payload={'frame_id':1,'box_xyxy':(1,2,3,4)})])

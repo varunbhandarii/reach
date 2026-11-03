@@ -195,6 +195,9 @@ When a clean pre-reach target crop is available, read-back compares that referen
 with the contact crop. The result answers whether the same physical object was
 touched, so a different name such as "stylus" does not by itself reject a pen.
 Without a clean reference it uses the single-image check and reports that mode.
+Wait for **Ref ready** before reaching when checking paired confirmation. A clean
+reference survives an automatic detection refresh; changing the requested target,
+choosing an instance or excluding one clears it until a new clear view is captured.
 `reach readback-probe contact.jpg --reference reference.jpg --phrase pen --count 3`
 explicitly uploads both saved images. Cache identities include both image hashes.
 

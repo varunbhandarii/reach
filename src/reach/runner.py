@@ -565,10 +565,14 @@ class Runner:
                     readback_status=self.readback.stats() if self.readback else {'enabled':False}
                     scene_status=self.scene.stats()
                     scene_status = {**scene_status, 'last': {'objects': getattr(self.brain, 'last_scene', ())}}
+                    reference=self._reference
+                    reference_ready=(bool(reference and target and reference['phrase']==target.phrase)
+                                     if self.readback else None)
                     usage=[readback_status,scene_status,voice_status.get('parse',{})]
                     spark_usage={key:sum(s.get(key,0) for s in usage)
                                  for key in ('cost_usd','input_tokens','output_tokens')}
                     stats.update(voice=voice_status,
+                                 reference_ready=reference_ready,
                                  speech=self.speaker.stats(), contact=self._contact_signals,
                                  readback=readback_status,
                                  scene=scene_status,
