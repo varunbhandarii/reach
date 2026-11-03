@@ -51,6 +51,12 @@ brain:
   disambiguate_s: 8
   ask_touch_enabled: false
   ask_touch_s: 1.5
+  direction_words: plain
+  cancel_stale_prompts: true
+  greeting: true
+  volume_step_db: 3
+  volume_min_db: -12
+  volume_max_db: 6
 voice:
   model: muse-voice-transcribe-1.0
   mode: ENDPOINTING

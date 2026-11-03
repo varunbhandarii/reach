@@ -24,7 +24,7 @@ def schema(properties):
 
 SCENE_SCHEMA=schema({'objects':{'type':'array','items':schema({'name':{'type':'string'},
     'position':{'type':'string','enum':['left','middle','right']}})}})
-PARSE_SCHEMA=schema({'intent':{'type':'string','enum':['find','describe','stop','cancel','repeat','recheck','none']},
+PARSE_SCHEMA=schema({'intent':{'type':'string','enum':['find','describe','stop','cancel','repeat','recheck','help','louder','quieter','none']},
     'target_phrase':{'type':'string'},'spoken_phrase':{'type':'string'},'language':{'type':'string'}})
 SCENE_PROMPT=('List the distinct objects on this table that a person could pick up, nearest first, at most 6. '
     'Use 1 to 3 everyday words per name and no brand names. position is where the object appears in the image. '

@@ -32,6 +32,7 @@ from .trial_resume import load_trial_resume, saved_trial_prefix
 from .spark import ReadBackClient, make_crop
 from .costs import estimate
 from .recording import OverlayRecorder
+from .startup import explain
 from .session_codec import replay_config
 from .reference import capture_reference
 from .spark import SceneClient
@@ -187,7 +188,15 @@ class Runner:
                 if not (self._trial and self._trial.prepared and self._trial.started is None and effect.key == 'hand_lost'):
                     self.speaker.say(effect.text, key=effect.key, priority=effect.priority, **(effect.payload or {}))
             elif effect.kind == 'cancel_speech':
-                self.speaker.cancel()
+                keys = (effect.payload or {}).get('keys')
+                if keys:
+                    if hasattr(self.speaker, 'drop_waiting'):
+                        self.speaker.drop_waiting(keys)
+                else:
+                    self.speaker.cancel()
+            elif effect.kind == 'volume':
+                if hasattr(self.audio, 'set_master_db'):
+                    self.audio.set_master_db(float(effect.payload['db']))
             elif effect.kind == 'earcon':
                 if not self._muted:
                     self.audio.earcon(effect.key)
@@ -292,6 +301,7 @@ class Runner:
         stats['hand_held'] = bool(getattr(self.hand, 'held', False))
         voice = self.voice.stats() if self.voice else {'connected': True, 'stereo_ok': True}
         stats.update(voice_connected=voice['connected'], voice_online=voice['connected'], voice_offline=not voice['connected'])
+        stats['speech_ready'] = bool(self.speaker.stats().get('cache_ready', True))
         if flipped is None:
             flipped = self.args.flip == 'on' or (self.args.flip == 'auto' and self.hand.upside_down)
         results = self.readback.poll() if self.readback else []
@@ -362,11 +372,26 @@ class Runner:
                     self._latencies.append(latency)
         except Exception as exc:
             self.audio.set(None)
+            self._fatal_cause = exc
             self._fatal = f"hand/controller stopped ({type(exc).__name__})"
             try:
                 self._log_error("hand_controller", type(exc).__name__, self._fatal)
             finally:
                 self._stop.set()
+
+    def _explain_failure(self, cause):
+        spoken, printed = explain(cause)
+        print(printed, file=sys.stderr, flush=True)
+        if not spoken or self._muted or not getattr(self.audio, 'running', False):
+            return
+        try:
+            self.speaker.say(spoken, key='startup_error', priority=2)
+            deadline = time.perf_counter()+3
+            while self.speaker.busy and time.perf_counter() < deadline:
+                self.speaker.poll()
+                time.sleep(.02)
+        except Exception:
+            pass
 
     def _select_phrase(self, phrase):
         self.audio.set(None)
@@ -598,9 +623,11 @@ class Runner:
         except KeyboardInterrupt:
             pass
         except Exception as exc:
+            cause = getattr(self, '_fatal_cause', None) or exc
             self._fatal = f"run stopped ({type(exc).__name__})"
             self._log_error("runner", type(exc).__name__, self._fatal)
             print(self._fatal, file=sys.stderr)
+            self._explain_failure(cause)
             exit_code = 1
         finally:
             self._active_finished = time.perf_counter()

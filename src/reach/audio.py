@@ -189,6 +189,8 @@ class CueEngine:
         self._speech_write = self._speech_read = 0
         self._speech_event_drops = 0
         self._muted = False
+        self._master = 1.0
+        self.master_db = 0.0
         self._recorder = None
 
     def begin_recording(self,path,log=None,ring_s=4):
@@ -212,6 +214,14 @@ class CueEngine:
 
     def cancel_speech(self):
         self._speech_command = (self._speech_command[0]+1, None, None)
+
+    def set_master_db(self, db):
+        """Overall output level for guide, earcons and speech; one float read per block."""
+        db = float(db)
+        if not -24 <= db <= 12:
+            raise ValueError('Master level must be between -24 and +12 dB')
+        self.master_db = db
+        self._master = 10**(db/20)
 
     def set_muted(self, value):
         self._muted = bool(value)
@@ -294,6 +304,9 @@ class CueEngine:
             if self._speech_id is not None and self._tone.speech is None:
                 self._speech_event('end', self._speech_id, time.perf_counter())
                 self._speech_id = None
+            if self._master != 1.0:
+                np.multiply(outdata, self._master, out=outdata)
+                np.clip(outdata, -1, 1, out=outdata)
             if self._muted:
                 outdata.fill(0)
         except Exception:
@@ -315,6 +328,7 @@ class CueEngine:
                 "cpu_load": float(self._stream.cpu_load) if self._stream else 0.0,
                 "reported_output_latency_ms": float(self._stream.latency)*1000 if self._stream else None,
                 "ducked": self.ducked, "earcon": self.last_earcon, "device": self._device,
+                "master_db": self.master_db,
                 "speech_active": self._speech_id is not None, "speech_event_drops": self._speech_event_drops,
                 "error": self._error, "active": bool(self._stream.active) if self._stream else False}
 

@@ -39,6 +39,15 @@ phrases:
   stereo_lost: 'Stereo lost. Check your headphones.'
   stereo_back: 'Stereo is back.'
   parse_help: 'Sorry, say find and the object.'
+  greeting: "Reach is ready. Say find and an object, or what's on the table."
+  help: "Say find and an object. What's on the table. Stop. Repeat. Louder or quieter."
+  louder: 'Louder.'
+  quieter: 'Quieter.'
+  loudest: "That's the loudest."
+  quietest: "That's the quietest."
+  brief_on: 'Okay, less talking.'
+  brief_off: 'Okay, more talking.'
+  found_brief: 'Found {object}.'
 objects:
   wallet: wallet
   pen: pen
@@ -65,5 +74,11 @@ directions:
   on your left: on your left
   on your right: on your right
   in the middle: in the middle
+  on your left, farther away: on your left, farther away
+  on your right, farther away: on your right, farther away
+  on your left, closer to you: on your left, closer to you
+  on your right, closer to you: on your right, closer to you
+  closer to you: closer to you
+  right by your hand: right by your hand
 choices: {closer: closer, farther: farther, other: other}
 counts: {two: two, three: three}

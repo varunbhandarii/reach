@@ -26,7 +26,8 @@ def replay_config(cfg, objects=None):
     """Only reducer settings: excludes keys, endpoints and device identities."""
     brain_keys=('prediction','veto_s','search_prompt_s','every_s','give_up_s','hand_lost_speak_s',
                 'target_lost_s','target_lost_speak_s','target_give_up_s','network_speak_every_s',
-                'readback_wait_s','mismatch_confidence','disambiguate_s','ask_touch_enabled','ask_touch_s')
+                'readback_wait_s','mismatch_confidence','disambiguate_s','ask_touch_enabled','ask_touch_s',
+                'direction_words','cancel_stale_prompts','greeting','volume_step_db','volume_min_db','volume_max_db')
     contact_keys=('enabled','still_ms','refractory_s','box_grow','min_margin_px','still_speed','hold_frames','overlap_min')
     return plain({'brain': {key:value for key,value in cfg.get('brain',{}).items() if key in brain_keys},
                   **({'scene': {'deadline_s': cfg['scene'].get('deadline_s', 6.0)}} if 'scene' in cfg else {}),

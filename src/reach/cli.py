@@ -210,7 +210,11 @@ def main(argv=None):
         return 2
     except (ValueError, OSError, RuntimeError) as exc:
         # Device/config errors are actionable; never echo arbitrary network exception bodies.
-        print(f"Cannot start Reach ({type(exc).__name__}). Check config, camera, hand model and audio device.", file=sys.stderr)
+        from .startup import explain, speak_once
+        spoken, printed = explain(exc)
+        print(f"Cannot start Reach ({type(exc).__name__}). {printed}", file=sys.stderr)
+        if args.command == 'run' and not getattr(args, 'mute', False):
+            speak_once(spoken)
         return 2
 
 
