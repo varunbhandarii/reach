@@ -32,14 +32,22 @@ Choose a stereo output with `uv run reach devices`. Use wired headphones and low
 system volume for the direction check.
 
 ```sh
-uv run reach run --mount handheld
+uv run reach setup      # pick the camera, stereo output and microphone once
+uv run reach start      # handheld guidance with those settings
 uv run reach run --mount handheld --source path/to/clip.mp4 --mute --sam-cache read
 uv run reach earcons
 ```
 
+`reach setup` lists cameras, stereo outputs and microphones, then writes the
+ignored `config.local.yaml`. On a Mac, choose the MacBook microphone: using
+AirPods as the microphone switches them to call audio, which removes stereo.
+`reach start` accepts the same options as `reach run`.
+
 Click a point to guide toward it without API requests. Keys 1–4 choose wallet,
 pen, ball and apple and send images to the configured Meta segmentation API;
-`c` cancels, `r` rechecks, `y`/`n` answer, `m` toggles sound and `q` quits.
+`c` cancels, `r` rechecks, `y`/`n` answer, `m` toggles sound, `u` switches
+between the presentation and debug screens, `l` toggles the high-contrast
+low-vision view and `q` quits.
 `v` starts tap-to-talk; tap it again after speaking to request the final transcript.
 File runs use the cache
 automatically; `--sam-cache read` prevents network requests on cache misses.
@@ -253,13 +261,37 @@ Keep a round object supported on a folded cloth so it cannot roll, and touch
 with a visible index fingertip before lifting it. Briefly held hand poses may
 maintain guidance, but cannot accumulate contact dwell time.
 
-## Sound display and event timelines
+## What you see and hear
 
-The display shows left/right pan, forward/back pitch, a blinking pulse and an
-ON LINE marker alongside larger speech captions. `--overlay-scale 2` draws text
-and shapes after scaling the camera image, producing a sharp 1280×960 canvas
-from a 640×480 source. Mouse selection still uses source-image coordinates.
-`--record` saves that scaled canvas and the rendered stereo mix locally.
+The screen is 16:9. The camera image fills the left side and is never covered:
+only the target outline, other candidates, the fingertip, a guidance arrow and a
+ring that pulses with the guide sound are drawn on it. The side panel shows, top
+to bottom:
+
+- what Reach is doing, in plain words ("Guiding to the pen", "Hand out of view")
+- what you said and what Reach is saying, each cleared a few seconds after it ends
+- the sound: left and right loudness, a closer-to-farther pitch scale and the pulse rate
+- the touched-object check or the list of objects on the table
+- voice, stereo and camera status
+
+`--ui presentation` hides developer details and is the default with `--record`;
+`--ui debug` adds frame rate, timing, cost and the key list. `--overlay-scale 2`
+draws a sharp 1920×1080 screen (1280×720 at scale 1). Mouse clicks are mapped
+back to camera pixels; clicks on the side panel are ignored. `--record` saves the
+screen and the rendered stereo mix locally. Colours come from the Okabe-Ito
+colour-blind-safe palette, and every coloured mark also has a shape or label.
+`reach ui-preview --out DIR` renders sample screens without a camera or network.
+
+Spoken commands, besides "find" and an object name: "what's on the table",
+"help", "louder", "quieter", "less talking", "more talking", "repeat",
+"recheck", "stop" and "cancel". Reach greets you once speech is ready and
+describes positions as on your left or right, closer to you or farther away.
+
+Text uses Atkinson Hyperlegible, designed by the Braille Institute for low-vision
+readers, and Noto Sans Devanagari for Hindi. Both are under the SIL Open Font
+License 1.1; the licence files are in `src/reach/assets/fonts/`.
+
+## Event timelines
 
 `reach report RUN_DIR --html timeline.html` exports a self-contained HTML/SVG
 timeline with state, distance, pan, pitch, commands, speech, model activity,

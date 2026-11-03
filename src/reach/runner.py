@@ -21,7 +21,7 @@ from .capture import Camera
 from .controller import target_center
 from .hand import HandTracker
 from .log import EventLog
-from .overlay import draw_overlay
+from .overlay import Captions, draw_overlay, layout_for
 from .perception import Perception
 from .trials import Trials
 from .types import CONTRACT_VERSION
@@ -99,6 +99,9 @@ class Runner:
             route_kwargs['platform'] = 'offline'
         self._route = AudioRouteMonitor(**route_kwargs)
         self._route_ok = True
+        self._captions = Captions()
+        self._ui_mode = getattr(args, 'ui', None) or ('presentation' if getattr(args, 'record', False) else 'debug')
+        self._low_vision = False
         self._decision_count = 0
         self._started = None
         self._active_finished = None
@@ -403,9 +406,13 @@ class Runner:
                             or not self._trial.prepared):
             return
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.audio.set(None)
             scale=getattr(getattr(self,'args',None),'overlay_scale',1)
-            x,y=x/scale,y/scale
+            frame=getattr(self,'_last_frame',None)
+            point=layout_for(frame.width if frame else 640, frame.height if frame else 480, scale).to_source((x, y))
+            if point is None:
+                return  # The side panel is not part of the camera image.
+            self.audio.set(None)
+            x,y=point
             self.select_point(x, y)
             self.log.emit("ui", {"click": [x, y]})
 
@@ -438,6 +445,12 @@ class Runner:
             self._select_phrase(None)
         elif key == ord('v') and self.voice:
             self.voice.toggle_ptt()
+        elif key == ord('u'):
+            self._ui_mode = 'presentation' if self._ui_mode == 'debug' else 'debug'
+            self.log.emit('ui_mode', {'mode': self._ui_mode, 'low_vision': self._low_vision})
+        elif key == ord('l'):
+            self._low_vision = not self._low_vision
+            self.log.emit('ui_mode', {'mode': self._ui_mode, 'low_vision': self._low_vision})
         elif key == ord('d') and not self._trial:
             self.post_command(make_command('describe'))
         elif self._trial:
@@ -596,16 +609,23 @@ class Runner:
                     usage=[readback_status,scene_status,voice_status.get('parse',{})]
                     spark_usage={key:sum(s.get(key,0) for s in usage)
                                  for key in ('cost_usd','input_tokens','output_tokens')}
+                    speech_status=self.speaker.stats()
+                    self._captions.update(now, heard=voice_status.get('last_transcript') if self.voice else None,
+                                          speaking=speech_status.get('text'),
+                                          state=self._decision.state if self._decision else None)
+                    stats.update(phrase=getattr(self.brain, 'phrase', None), route_ok=self._route_ok,
+                                 master_db=getattr(self.audio, 'master_db', 0.0))
                     stats.update(voice=voice_status,
                                  reference_ready=reference_ready,
-                                 speech=self.speaker.stats(), contact=self._contact_signals,
+                                 speech=speech_status, contact=self._contact_signals,
                                  readback=readback_status,
                                  scene=scene_status,
                                  excluded_instances=self._excluded_boxes(stats),
                                  estimated_cost_usd=estimate(self.cfg,stats,voice_status,spark_usage)['estimated_usd'])
                     canvas = draw_overlay(image, self._latest_hand, target, self._decision, stats,
                         muted=self._muted, trial=self._trial.lines() if self._trial else None, stale_box=self._last_box,
-                        scale=self.args.overlay_scale,now=now)
+                        scale=self.args.overlay_scale,now=now,mode=self._ui_mode,low_vision=self._low_vision,
+                        captions=self._captions)
                     if self._overlay_recorder:
                         self._overlay_recorder.submit(canvas,now)
                     if not self.args.headless:

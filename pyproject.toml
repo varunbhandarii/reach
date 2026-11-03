@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=2.5.4",
     "openai>=3.39.0",
     "opencv-contrib-python>=4.14,<5",
+    "pillow>=13.0.0",
     "python-dotenv>=1.2.4",
     "pyttsx3>=2.99 ; sys_platform == 'win32'",
     "pyyaml>=6.0.3",
