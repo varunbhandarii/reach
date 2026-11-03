@@ -39,6 +39,15 @@ phrases:
   stereo_lost: 'स्टीरियो आवाज़ बंद हो गई है। अपने हेडफ़ोन जाँचें।'
   stereo_back: 'स्टीरियो आवाज़ फिर चालू हो गई है।'
   parse_help: 'माफ़ कीजिए, खोजो कहें और चीज़ का नाम बताएँ।'
+  greeting: 'रीच तैयार है। खोजो कहें और चीज़ का नाम बताएँ, या पूछें कि मेज़ पर क्या है।'
+  help: 'खोजो कहें और चीज़ का नाम बताएँ। मेज़ पर क्या है। रुको। दोहराओ। आवाज़ तेज़ या धीमी।'
+  louder: 'आवाज़ तेज़ कर दी।'
+  quieter: 'आवाज़ धीमी कर दी।'
+  loudest: 'यह सबसे तेज़ आवाज़ है।'
+  quietest: 'यह सबसे धीमी आवाज़ है।'
+  brief_on: 'ठीक है, कम बोलूँगी।'
+  brief_off: 'ठीक है, ज़्यादा बताऊँगी।'
+  found_brief: '{object} की जगह पता चल गई है।'
 objects:
   wallet: बटुआ
   pen: कलम
@@ -65,5 +74,11 @@ directions:
   on your left: आपके बाएँ
   on your right: आपके दाएँ
   in the middle: बीच में
+  on your left, farther away: बाईं ओर, थोड़ा आगे
+  on your right, farther away: दाईं ओर, थोड़ा आगे
+  on your left, closer to you: बाईं ओर, आपके पास
+  on your right, closer to you: दाईं ओर, आपके पास
+  closer to you: आपके पास
+  right by your hand: आपके हाथ के पास
 choices: {closer: पास वाली, farther: दूर वाली, other: दूसरी}
 counts: {two: दो, three: तीन}

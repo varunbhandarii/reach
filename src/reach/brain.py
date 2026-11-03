@@ -16,6 +16,15 @@ from .safety import blocked_term, REFUSAL
 from .config import scene_deadline
 
 
+GREETING = "Reach is ready. Say find and an object, or what's on the table."
+HELP = "Say find and an object. What's on the table. Stop. Repeat. Louder or quieter."
+# Replies to an explicit request are spoken even in brief mode.
+ANSWER_KEYS = frozenset(('help', 'louder', 'quieter', 'loudest', 'quietest', 'brief_on', 'brief_off', 'yes_ack', 'no_ack'))
+# Queued prompts that no longer apply after a transition; a playing phrase finishes.
+STALE_PROMPTS = {('HAND_LOST', 'GUIDING'): ('hand_lost',), ('TARGET_LOST', 'GUIDING'): ('target_lost',),
+                 ('SEARCHING', 'GUIDING'): ('sweep', 'looking'), ('SEARCHING', 'DISAMBIGUATING'): ('sweep', 'looking')}
+
+
 class Brain:
     def __init__(self, cfg=None, objects=('wallet','pen','ball','apple')):
         self.cfg = cfg or {}
@@ -48,11 +57,29 @@ class Brain:
         self.language = 'en'
         self.spoken_phrase = None
         self._safety_blocked = False
+        self.volume_db = 0.0
+        self.brief = False
+        self._greeted = False
+
+    def _volume(self, kind, effects):
+        step = self._number('volume_step_db', 3)
+        low, high = self._number('volume_min_db', -12), self._number('volume_max_db', 6)
+        level = self.volume_db+(step if kind == 'louder' else -step)
+        if level > high+1e-9 or level < low-1e-9:
+            self._speak(effects, "That's the loudest." if kind == 'louder' else "That's the quietest.",
+                        'loudest' if kind == 'louder' else 'quietest', 1)
+            return
+        self.volume_db = level
+        effects.append(Effect('volume', payload={'db': level}))
+        effects.append(Effect('log', key='volume', payload={'db': level}))
+        self._speak(effects, 'Louder.' if kind == 'louder' else 'Quieter.', kind, 1)
 
     def _number(self, key, default):
         return float(self.params.get(key, default))
 
     def _speak(self, effects, text, key, priority=1):
+        if self.brief and priority == 0 and key not in ANSWER_KEYS:
+            return
         self._last_spoken = (text,key,priority)
         payload = ({'language': self.language, 'spoken_phrase': self.spoken_phrase}
                    if self.language != 'en' else None)
@@ -75,6 +102,9 @@ class Brain:
         effects.append(Effect('log', key='state', payload={'from':old,'to':state,'reason':reason,'phrase':self.phrase}))
         if rate(old) != rate(state) or force:
             effects.append(Effect('perception_state', key=rate(state)))
+        stale = STALE_PROMPTS.get((old, state)) if self.params.get('cancel_stale_prompts', False) else None
+        if stale:
+            effects.append(Effect('cancel_speech', payload={'keys': list(stale)}))
         if state == 'HAND_LOST': self._hand_notice = False
         if state == 'TARGET_LOST': self._target_notice = False
 
@@ -118,6 +148,14 @@ class Brain:
         if flipped: dx,dy=-dx,-dy
         side = 'left' if dx < -.05 else 'right' if dx > .05 else None
         depth = 'ahead' if dy < -.05 else 'back' if dy > .05 else None
+        if self.params.get('direction_words', 'legacy') == 'plain':
+            # Image down is toward the body for a phone held over the table.
+            distance = {'ahead': 'farther away', 'back': 'closer to you'}.get(depth)
+            if side and distance: return f'on your {side}, {distance}'
+            if side: return f'to your {side}'
+            if depth == 'ahead': return 'straight ahead'
+            if depth == 'back': return 'closer to you'
+            return 'right by your hand'
         if depth and side: return f'{depth} on your {side}'
         if side: return f'to your {side}'
         if depth=='back': return 'back toward you'
@@ -303,13 +341,16 @@ class Brain:
         stats=perception_stats or {}
         commands=tuple(commands)
         results=tuple(results)
-        observed_stats = {key: stats[key] for key in ('stale','ambiguous','voice_online','voice_offline','consecutive_errors','hand_held') if key in stats}
+        observed_stats = {key: stats[key] for key in ('stale','ambiguous','voice_online','voice_offline','consecutive_errors','hand_held','speech_ready') if key in stats}
         snapshot = plain(dict(seq=self._seq, now=now, hand=hand, target=target, perception_stats=observed_stats,
                               commands=commands, results=results, speaking=speaking,
                               frame_size=frame_size, flipped=flipped))
         if frame_id is not None:
             snapshot['frame_id'] = frame_id
         effects=[Effect('log', key='brain_in', payload=snapshot)]
+        if self.params.get('greeting', False) and not self._greeted and stats.get('speech_ready'):
+            self._greeted = True
+            self._speak(effects, GREETING, 'greeting', 1)
         # Stop dominates a queued batch so a cancelled search never reaches I/O.
         stopping=next((c for c in reversed(commands) if c.kind in ('stop','cancel','start_over')),None)
         if stopping:
@@ -368,6 +409,14 @@ class Brain:
                 elif not self._choice_prompted:
                     self._choice_prompted=True
                     self._speak(effects,'Say left or right.','choose_again')
+            elif command.kind=='help':
+                self._speak(effects,HELP,'help',1)
+            elif command.kind in ('louder','quieter'):
+                self._volume(command.kind,effects)
+            elif command.kind in ('brief','verbose'):
+                self.brief = command.kind=='brief'
+                self._speak(effects,'Okay, less talking.' if self.brief else 'Okay, more talking.',
+                            'brief_on' if self.brief else 'brief_off',1)
             elif command.kind in ('yes','no'):
                 self._speak(effects,f'I heard {command.kind}.',f'{command.kind}_ack',0)
             elif command.kind=='repeat' and self._last_spoken:
@@ -410,7 +459,10 @@ class Brain:
                 else:
                     self._transition(now,'GUIDING',effects,'target_found')
                     effects.append(Effect('earcon',key='found'))
-                    self._speak(effects,f'Found {self._name()}, {self._where(hand,center,frame_size,flipped)}.','found')
+                    if self.brief:
+                        self._speak(effects,f'Found {self._name()}.','found_brief')
+                    else:
+                        self._speak(effects,f'Found {self._name()}, {self._where(hand,center,frame_size,flipped)}.','found')
             elif elapsed+1e-9 >= self._number('give_up_s',20):
                 name=self._name();self._clear(now,effects,'search_timeout')
                 self._speak(effects,f"I couldn't find {name}.",'not_found')

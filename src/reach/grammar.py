@@ -12,6 +12,11 @@ EXACT = {"stop": "stop", "cancel": "cancel", "never mind": "cancel", "nevermind"
 EXACT.update(dict.fromkeys(("what's on the table", "what is on the table", "what do you see",
                            "what's in front of me", "what is in front of me", "what's here",
                            "what is here", "describe", "look around"), 'describe'))
+EXACT.update(dict.fromkeys(("help", "what can i say", "commands", "what are the commands"), 'help'))
+EXACT.update(dict.fromkeys(("louder", "volume up", "turn it up", "speak up"), 'louder'))
+EXACT.update(dict.fromkeys(("quieter", "softer", "volume down", "turn it down"), 'quieter'))
+EXACT.update(dict.fromkeys(("less talking", "be brief", "talk less"), 'brief'))
+EXACT.update(dict.fromkeys(("more talking", "talk more", "more detail"), 'verbose'))
 FILLERS = ("hey reach", "can you", "could you", "please", "okay", "um", "uh")
 
 

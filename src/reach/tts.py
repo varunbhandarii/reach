@@ -44,6 +44,8 @@ class SilentSpeaker:
         self.last_text = text
     def cancel(self, **kwargs):
         self.last_text = None
+    def drop_waiting(self, keys):
+        pass
     def poll(self):
         pass
     def stats(self):
@@ -107,15 +109,21 @@ def phrase_texts(objects):
              'Stopped.', 'Ready.', 'I heard yes.', 'I heard no.', 'Voice is offline. Use the keys.', 'Connection problem. Still trying.',
              'One on your left, one on your right. Say left or right.', 'One ahead, one closer. Say ahead or closer.',
              'Guiding to the one on your left.', 'Guiding to the one on your right.', 'Guiding to the nearest one.',
-             'Say left or right.', 'Are you touching it?']
+             'Say left or right.', 'Are you touching it?',
+             "Reach is ready. Say find and an object, or what's on the table.",
+             "Say find and an object. What's on the table. Stop. Repeat. Louder or quieter.",
+             'Louder.', 'Quieter.', "That's the loudest.", "That's the quietest.",
+             'Okay, less talking.', 'Okay, more talking.']
     for obj in objects:
         texts.extend([f'Looking for the {obj}.', f"I can't see the {obj} yet. Move the phone slowly.",
             f"I couldn't find the {obj}.", f'Lost the {obj}. Hold the phone still.', f'I lost the {obj}.',
             f"You're touching the {obj}.",f'You have the {obj}.',f"That's not the {obj}.",
             f"I can't confirm the {obj}.",f'I see two {obj}.'])
         texts.extend(f'Found the {obj}, {where}.' for where in
-            ('to your left', 'to your right', 'straight ahead', 'ahead on your left', 'ahead on your right',
-             'back toward you', 'back on your left', 'back on your right'))
+            ('to your left', 'to your right', 'straight ahead', 'on your left, farther away',
+             'on your right, farther away', 'on your left, closer to you', 'on your right, closer to you',
+             'closer to you', 'right by your hand'))
+        texts.append(f'Found the {obj}.')
         texts.extend(f'Trial {i}. Find the {obj}.' for i in range(1, 6))
     texts.extend(['One on your left, one on your right. Say left or right.',
                   'One ahead, one closer. Say ahead or closer.', 'Guiding to the nearest one.',
@@ -235,6 +243,20 @@ class Speaker:
                 self._waiting.append(job)
             self._condition.notify_all()
             return job.ident
+
+    def drop_waiting(self, keys):
+        """Drop queued phrases with these keys; a phrase already playing finishes."""
+        keys = set(keys)
+        with self._condition:
+            retained = deque()
+            for job in self._waiting:
+                if job.key in keys:
+                    self._emit('drop', job, reason='outdated')
+                    self._requests.pop(job.ident, None)
+                else:
+                    retained.append(job)
+            self._waiting = retained
+            self._condition.notify_all()
 
     def cancel(self, *, info_only=False):
         with self._condition:

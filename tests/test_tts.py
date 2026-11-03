@@ -101,12 +101,21 @@ def test_sapi_memory_synthesis_and_trim():
         sapi.close()
 
 
-def test_found_phrase_cache_includes_every_direction():
+def test_found_phrase_cache_includes_every_spoken_direction():
+    from reach.brain import Brain
     from reach.tts import phrase_texts
+    from reach.types import HandObs
     texts=phrase_texts(['wallet'])
-    for where in ('to your left','to your right','straight ahead','ahead on your left',
-                  'ahead on your right','back toward you','back on your left','back on your right'):
+    brain=Brain({'brain':{'direction_words':'plain'}})
+    spoken=set()
+    for x in (100,320,540):
+        for y in (80,240,400):
+            hand=HandObs(1,True,(320,240),(320,240),(),(0,0),1)
+            spoken.add(brain._where(hand,(x,y),(640,480),False))
+    assert len(spoken)==9
+    for where in spoken:
         assert f'Found the wallet, {where}.' in texts
+    assert 'Found the wallet.' in texts
 
 
 def test_startup_wait_populates_cache_before_live_commands():

@@ -45,6 +45,7 @@ def parser():
     run.add_argument('--record', action='store_true', help='Save local overlay video and stereo output audio')
     run.add_argument('--record-format', choices=['mp4','avi'], default='mp4')
     run.add_argument('--overlay-scale',type=int,choices=[1,2],default=1)
+    run.add_argument('--ui', choices=['presentation', 'debug'], help='Screen detail; presentation is the default when recording')
     run.add_argument('--speech-every', type=float, default=0, help='Optional interval for a local speech load probe')
     run.add_argument("--trial-seed", type=int, default=1)
     run.add_argument("--trial-seconds", type=float, default=45)
@@ -78,6 +79,12 @@ def parser():
     replay_full=commands.add_parser('replay', help='Verify saved controller decisions without devices or network')
     replay_full.add_argument('run_dir',type=Path)
     replay_full.add_argument('--strip',type=Path,metavar='OUTPUT_DIR',help='Create a fresh events-only copy with canonical command text')
+    commands.add_parser('setup', help='Choose the camera, stereo output and microphone; saves config.local.yaml')
+    commands.add_parser('start', help='Run handheld guidance with the saved local settings (options as for run)')
+    preview = commands.add_parser('ui-preview', help='Render sample screens to images, without a camera or network')
+    preview.add_argument('--out', type=Path, required=True)
+    preview.add_argument('--background', type=Path, help='Optional local image to draw behind the marks')
+    preview.add_argument('--scale', type=int, choices=[1, 2], action='append', help='Repeat for both; default both')
     return result
 
 
@@ -142,6 +149,9 @@ def configure(args):
 
 def main(argv=None):
     arguments = parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['start']:
+        argv = ['run', '--mount', 'handheld', *argv[1:]]
     args = arguments.parse_args(argv)
     try:
         if args.command == "devices":
@@ -167,6 +177,16 @@ def main(argv=None):
         if args.command == "replay-contact":
             from .replay_contact import replay_contact
             print(json.dumps(replay_contact(args.run_dir, frames=args.frames, force=args.force), indent=2))
+            return 0
+        if args.command == 'setup':
+            from .setup_wizard import run_setup
+            run_setup()
+            return 0
+        if args.command == 'ui-preview':
+            from .ui_preview import render
+            written, (p50, p95) = render(args.out, args.background, tuple(args.scale or (1, 2)))
+            print(f'{len(written)} images written to {args.out}')
+            print(f'1080p draw time p50 {p50:.1f} ms, p95 {p95:.1f} ms')
             return 0
         if args.command == 'replay':
             from .replay import replay_session, ReplayError
@@ -199,7 +219,12 @@ def main(argv=None):
         if args.command == 'readback-probe':
             from .spark_probe import probe
             return probe(args)
-        cfg = configure(args)
+        try:
+            cfg = configure(args)
+        except ValueError as exc:
+            # Option checks are local messages, safe and specific to print as written.
+            print(f'Cannot start Reach: {exc}', file=sys.stderr)
+            return 2
         from .runner import Runner
         return Runner(cfg, args).run()
     except TrialResumeError as exc:
@@ -210,7 +235,11 @@ def main(argv=None):
         return 2
     except (ValueError, OSError, RuntimeError) as exc:
         # Device/config errors are actionable; never echo arbitrary network exception bodies.
-        print(f"Cannot start Reach ({type(exc).__name__}). Check config, camera, hand model and audio device.", file=sys.stderr)
+        from .startup import explain, speak_once
+        spoken, printed = explain(exc)
+        print(f"Cannot start Reach ({type(exc).__name__}). {printed}", file=sys.stderr)
+        if args.command == 'run' and not getattr(args, 'mute', False):
+            speak_once(spoken)
         return 2
 
 

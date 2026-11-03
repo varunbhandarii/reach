@@ -14,10 +14,11 @@ Log effects use key=event type and payload=flat event data.
 from dataclasses import dataclass
 from typing import Literal
 
-CONTRACT_VERSION = "5"
+CONTRACT_VERSION = "6"
 Source = Literal["android_mjpeg", "iphone_continuity", "usb_webcam", "file"]
 CommandKind = Literal[
-    "find", "choose", "cancel", "start_over", "repeat", "recheck", "yes", "no", "stop", "unknown", "describe"
+    "find", "choose", "cancel", "start_over", "repeat", "recheck", "yes", "no", "stop", "unknown", "describe",
+    "help", "louder", "quieter", "brief", "verbose"
 ]
 
 
@@ -102,7 +103,7 @@ class Decision:
 
 @dataclass(frozen=True)
 class Effect:
-    kind: Literal["speak", "cancel_speech", "earcon", "set_phrase", "force_query", "perception_state", "log", "readback", "choose_instance", "exclude_instance", "describe"]
+    kind: Literal["speak", "cancel_speech", "earcon", "set_phrase", "force_query", "perception_state", "log", "readback", "choose_instance", "exclude_instance", "describe", "volume"]
     text: str | None = None
     key: str | None = None
     priority: int = 0

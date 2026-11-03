@@ -21,7 +21,7 @@ from .capture import Camera
 from .controller import target_center
 from .hand import HandTracker
 from .log import EventLog
-from .overlay import draw_overlay
+from .overlay import Captions, complex_text_supported, draw_overlay, has_devanagari, layout_for
 from .perception import Perception
 from .trials import Trials
 from .types import CONTRACT_VERSION
@@ -32,6 +32,7 @@ from .trial_resume import load_trial_resume, saved_trial_prefix
 from .spark import ReadBackClient, make_crop
 from .costs import estimate
 from .recording import OverlayRecorder
+from .startup import explain
 from .session_codec import replay_config
 from .reference import capture_reference
 from .spark import SceneClient
@@ -98,6 +99,10 @@ class Runner:
             route_kwargs['platform'] = 'offline'
         self._route = AudioRouteMonitor(**route_kwargs)
         self._route_ok = True
+        self._captions = Captions()
+        self._shaping = complex_text_supported()
+        self._ui_mode = getattr(args, 'ui', None) or ('presentation' if getattr(args, 'record', False) else 'debug')
+        self._low_vision = False
         self._decision_count = 0
         self._started = None
         self._active_finished = None
@@ -187,7 +192,15 @@ class Runner:
                 if not (self._trial and self._trial.prepared and self._trial.started is None and effect.key == 'hand_lost'):
                     self.speaker.say(effect.text, key=effect.key, priority=effect.priority, **(effect.payload or {}))
             elif effect.kind == 'cancel_speech':
-                self.speaker.cancel()
+                keys = (effect.payload or {}).get('keys')
+                if keys:
+                    if hasattr(self.speaker, 'drop_waiting'):
+                        self.speaker.drop_waiting(keys)
+                else:
+                    self.speaker.cancel()
+            elif effect.kind == 'volume':
+                if hasattr(self.audio, 'set_master_db'):
+                    self.audio.set_master_db(float(effect.payload['db']))
             elif effect.kind == 'earcon':
                 if not self._muted:
                     self.audio.earcon(effect.key)
@@ -292,6 +305,7 @@ class Runner:
         stats['hand_held'] = bool(getattr(self.hand, 'held', False))
         voice = self.voice.stats() if self.voice else {'connected': True, 'stereo_ok': True}
         stats.update(voice_connected=voice['connected'], voice_online=voice['connected'], voice_offline=not voice['connected'])
+        stats['speech_ready'] = bool(self.speaker.stats().get('cache_ready', True))
         if flipped is None:
             flipped = self.args.flip == 'on' or (self.args.flip == 'auto' and self.hand.upside_down)
         results = self.readback.poll() if self.readback else []
@@ -362,11 +376,26 @@ class Runner:
                     self._latencies.append(latency)
         except Exception as exc:
             self.audio.set(None)
+            self._fatal_cause = exc
             self._fatal = f"hand/controller stopped ({type(exc).__name__})"
             try:
                 self._log_error("hand_controller", type(exc).__name__, self._fatal)
             finally:
                 self._stop.set()
+
+    def _explain_failure(self, cause):
+        spoken, printed = explain(cause)
+        print(printed, file=sys.stderr, flush=True)
+        if not spoken or self._muted or not getattr(self.audio, 'running', False):
+            return
+        try:
+            self.speaker.say(spoken, key='startup_error', priority=2)
+            deadline = time.perf_counter()+3
+            while self.speaker.busy and time.perf_counter() < deadline:
+                self.speaker.poll()
+                time.sleep(.02)
+        except Exception:
+            pass
 
     def _select_phrase(self, phrase):
         self.audio.set(None)
@@ -378,9 +407,13 @@ class Runner:
                             or not self._trial.prepared):
             return
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.audio.set(None)
             scale=getattr(getattr(self,'args',None),'overlay_scale',1)
-            x,y=x/scale,y/scale
+            frame=getattr(self,'_last_frame',None)
+            point=layout_for(frame.width if frame else 640, frame.height if frame else 480, scale).to_source((x, y))
+            if point is None:
+                return  # The side panel is not part of the camera image.
+            self.audio.set(None)
+            x,y=point
             self.select_point(x, y)
             self.log.emit("ui", {"click": [x, y]})
 
@@ -413,6 +446,12 @@ class Runner:
             self._select_phrase(None)
         elif key == ord('v') and self.voice:
             self.voice.toggle_ptt()
+        elif key == ord('u'):
+            self._ui_mode = 'presentation' if self._ui_mode == 'debug' else 'debug'
+            self.log.emit('ui_mode', {'mode': self._ui_mode, 'low_vision': self._low_vision})
+        elif key == ord('l'):
+            self._low_vision = not self._low_vision
+            self.log.emit('ui_mode', {'mode': self._ui_mode, 'low_vision': self._low_vision})
         elif key == ord('d') and not self._trial:
             self.post_command(make_command('describe'))
         elif self._trial:
@@ -571,16 +610,26 @@ class Runner:
                     usage=[readback_status,scene_status,voice_status.get('parse',{})]
                     spark_usage={key:sum(s.get(key,0) for s in usage)
                                  for key in ('cost_usd','input_tokens','output_tokens')}
+                    speech_status=self.speaker.stats()
+                    speaking = speech_status.get('text')
+                    if speaking and has_devanagari(speaking) and not self._shaping:
+                        speaking = speech_status.get('caption') or speaking  # English source text
+                    self._captions.update(now, heard=voice_status.get('last_transcript') if self.voice else None,
+                                          speaking=speaking,
+                                          state=self._decision.state if self._decision else None)
+                    stats.update(phrase=getattr(self.brain, 'phrase', None), route_ok=self._route_ok,
+                                 master_db=getattr(self.audio, 'master_db', 0.0))
                     stats.update(voice=voice_status,
                                  reference_ready=reference_ready,
-                                 speech=self.speaker.stats(), contact=self._contact_signals,
+                                 speech=speech_status, contact=self._contact_signals,
                                  readback=readback_status,
                                  scene=scene_status,
                                  excluded_instances=self._excluded_boxes(stats),
                                  estimated_cost_usd=estimate(self.cfg,stats,voice_status,spark_usage)['estimated_usd'])
                     canvas = draw_overlay(image, self._latest_hand, target, self._decision, stats,
                         muted=self._muted, trial=self._trial.lines() if self._trial else None, stale_box=self._last_box,
-                        scale=self.args.overlay_scale,now=now)
+                        scale=self.args.overlay_scale,now=now,mode=self._ui_mode,low_vision=self._low_vision,
+                        captions=self._captions)
                     if self._overlay_recorder:
                         self._overlay_recorder.submit(canvas,now)
                     if not self.args.headless:
@@ -598,9 +647,11 @@ class Runner:
         except KeyboardInterrupt:
             pass
         except Exception as exc:
+            cause = getattr(self, '_fatal_cause', None) or exc
             self._fatal = f"run stopped ({type(exc).__name__})"
             self._log_error("runner", type(exc).__name__, self._fatal)
             print(self._fatal, file=sys.stderr)
+            self._explain_failure(cause)
             exit_code = 1
         finally:
             self._active_finished = time.perf_counter()
