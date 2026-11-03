@@ -56,7 +56,9 @@ def test_stream_transport_status_and_completion(monkeypatch):
     class Connection:
         sock = None
         def __init__(self, *args, **kwargs): pass
-        def request(self, *args): self.body = args[2]
+        def request(self, *args):
+            self.body = args[2]
+            assert json.loads(self.body)['store'] is False
         def getresponse(self): return response
         def close(self): pass
     monkeypatch.setattr('reach.sam_client.http.client.HTTPSConnection', Connection)

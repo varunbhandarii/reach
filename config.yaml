@@ -75,7 +75,17 @@ spark:
   max_output_tokens: 600
   cache: auto
   cache_dir: runs/spark-cache
-  prompt_version: '1'
+  prompt_version: '2'
+scene:
+  max_output_tokens: 1200
+  image_long_side: 512
+  detail: low
+  deadline_s: 6.0
+  cache: auto
+  cache_dir: runs/scene-cache
+parse:
+  enabled: true
+  deadline_s: 3.0
 costs:
   sam_per_image: 0.0025
   voice_per_hour: 0.18

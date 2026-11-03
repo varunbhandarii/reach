@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from .run_metrics import summarize as summarize_loop
+from .timeline import write_html
 
 
 def summarize(run_dir):

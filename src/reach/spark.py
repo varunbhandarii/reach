@@ -19,17 +19,18 @@ import numpy as np
 from .config import PROJECT_ROOT
 from .sam_client import retry_seconds
 from .types import ReadBack
+from .spark_services import SceneClient, ParseClient
 
 SCHEMA = {"type": "object", "additionalProperties": False,
-    "required": ["matches_request", "object_name", "confidence", "hint"],
+    "required": ["matches_request", "object_name", "confidence", "hint", "same_object"],
     "properties": {"matches_request": {"type": "boolean"}, "object_name": {"type": "string"},
-                   "confidence": {"type": "number"}, "hint": {"type": "string"}}}
+                   "confidence": {"type": "number"}, "hint": {"type": "string"}, "same_object":{"type":"boolean"}}}
 
 
 def validate_answer(value):
     if not isinstance(value, dict) or set(value) != set(SCHEMA['required']):
         raise ValueError('Invalid read-back fields')
-    if (type(value['matches_request']) is not bool or not isinstance(value['object_name'], str)
+    if (type(value['matches_request']) is not bool or type(value['same_object']) is not bool or not isinstance(value['object_name'], str)
             or not 1 <= len(value['object_name'].split()) <= 3
             or not isinstance(value['hint'], str) or len(value['hint'].split()) > 6
             or type(value['confidence']) not in (float, int)
@@ -93,27 +94,37 @@ class ReadBackClient:
         if self.log is not None:
             self.log.emit(kind,data)
 
-    def _identity(self, jpeg, phrase):
+    def _identity(self, jpeg, phrase, reference_jpeg=None):
         return {'jpeg_sha256':sha256(jpeg).hexdigest(),'phrase':phrase,'model':self.model,
-                'effort':self.effort,'detail':self.detail,'prompt_version':str(self.cfg.get('prompt_version','1'))}
+                'reference_sha256':sha256(reference_jpeg).hexdigest() if reference_jpeg else None,
+                'effort':self.effort,'detail':self.detail,'prompt_version':str(self.cfg.get('prompt_version','2'))}
 
     def _path(self, identity):
         return self.root/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
 
-    def body(self, jpeg, phrase):
-        prompt = (f"The person asked for: '{phrase}'. Their fingers are touching the object inside the green box. "
+    def body(self, jpeg, phrase, reference_jpeg=None):
+        prompt = (f"Image 1 shows the {phrase} the person asked for, inside the green box, before they reached for it. "
+            "Image 2 shows their fingers touching an object inside the green box now. same_object: is the touched object "
+            "in image 2 the same physical object as the one boxed in image 1? "
+            f"matches_request: could the touched object reasonably be called a {phrase}? "
+            "object_name: what the touched object is, 1 to 3 words. hint: at most 6 words about how it is oriented "
+            "relative to their hand, or empty. confidence: your confidence in same_object, 0 to 1.") if reference_jpeg else (
+                  f"The person asked for: '{phrase}'. Their fingers are touching the object inside the green box. "
                   f"Is that object a {phrase}? object_name: what the object in the box is, 1 to 3 words. "
-                  "hint: at most 6 words about how it is oriented relative to their hand, or empty. confidence: 0 to 1.")
+                  "hint: at most 6 words about how it is oriented relative to their hand, or empty. confidence: 0 to 1. "
+                  "There is no reference image; set same_object equal to matches_request.")
+        content=[{'type':'input_text','text':prompt}]
+        for data in ((reference_jpeg,jpeg) if reference_jpeg else (jpeg,)):
+            content.append({'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(data).decode('ascii'),'detail':self.detail})
         return {'model':self.model,'store':False,'reasoning':{'effort':self.effort},
             'max_output_tokens':int(self.cfg.get('max_output_tokens',600)),
-            'input':[{'role':'user','content':[{'type':'input_text','text':prompt},
-                {'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(jpeg).decode('ascii'),'detail':self.detail}]}],
+            'input':[{'role':'user','content':content}],
             'text':{'format':{'type':'json_schema','name':'readback','strict':True,'schema':SCHEMA}}}
 
-    async def _call(self, jpeg, phrase, *, count_tokens=False):
-        return await asyncio.wait_for(self._perform(jpeg,phrase,count_tokens=count_tokens),self.deadline)
+    async def _call(self, jpeg, phrase, *, count_tokens=False,reference_jpeg=None):
+        return await asyncio.wait_for(self._perform(jpeg,phrase,count_tokens=count_tokens,reference_jpeg=reference_jpeg),self.deadline)
 
-    async def _perform(self, jpeg, phrase, *, count_tokens=False):
+    async def _perform(self, jpeg, phrase, *, count_tokens=False,reference_jpeg=None):
         from openai import AsyncOpenAI
         from dotenv import dotenv_values
         key = self._key or os.environ.get('MODEL_API_KEY') or dotenv_values(PROJECT_ROOT/'.env').get('MODEL_API_KEY')
@@ -121,7 +132,7 @@ class ReadBackClient:
             raise RuntimeError('Model API key missing')
         factory = self._factory or AsyncOpenAI
         async with factory(api_key=key or 'synthetic',base_url='https://api.meta.ai/v1',max_retries=0,timeout=self.deadline) as client:
-            body = self.body(jpeg,phrase)
+            body = self.body(jpeg,phrase,reference_jpeg)
             if count_tokens:
                 # The token-count endpoint accepts the same model/input description.
                 response = await client.post('/responses/input_tokens',cast_to=dict,
@@ -129,10 +140,10 @@ class ReadBackClient:
                 return response
             return await client.responses.create(**body)
 
-    def count_tokens(self, jpeg, phrase):
-        return asyncio.run(self._call(jpeg,phrase,count_tokens=True))
+    def count_tokens(self, jpeg, phrase, reference_jpeg=None):
+        return asyncio.run(self._call(jpeg,phrase,count_tokens=True,reference_jpeg=reference_jpeg))
 
-    def request(self, request_id, jpeg, phrase, target_frame_id):
+    def request(self, request_id, jpeg, phrase, target_frame_id, reference_jpeg=None):
         if not jpeg or not isinstance(phrase,str) or not phrase.strip():
             self.fail(request_id, target_frame_id, phrase, 'image_missing')
             return False
@@ -143,8 +154,10 @@ class ReadBackClient:
             self._busy = True
         self._emit('readback_req',{'request_id':request_id,'phrase':phrase,'frame_id':target_frame_id,
             'image_bytes':len(jpeg),'image_sha256':sha256(jpeg).hexdigest(),'effort':self.effort,'detail':self.detail,
-            'model':self.model,'store':False,'cache_mode':self.mode})
-        self._thread = threading.Thread(target=self._work,args=(request_id,bytes(jpeg),phrase,target_frame_id),name='readback',daemon=True)
+            'model':self.model,'store':False,'cache_mode':self.mode,'mode':'pair' if reference_jpeg else 'single',
+            'prompt_version':str(self.cfg.get('prompt_version','2')),
+            'reference_sha256':sha256(reference_jpeg).hexdigest() if reference_jpeg else None})
+        self._thread = threading.Thread(target=self._work,args=(request_id,bytes(jpeg),phrase,target_frame_id,reference_jpeg),name='readback',daemon=True)
         self._thread.start()
         return True
 
@@ -156,10 +169,10 @@ class ReadBackClient:
         self._emit('readback_resp',{**self._last,'status':result.error or 'ok','usage':usage,'cost_usd':cost,'cached':cached})
         self._results.put(result)
 
-    def _work(self, ident, jpeg, phrase, frame_id):
+    def _work(self, ident, jpeg, phrase, frame_id, reference_jpeg=None):
         start, answer, error, usage, cost, cached = self._clock(), None, None, {}, 0., False
         try:
-            identity = self._identity(jpeg,phrase)
+            identity = self._identity(jpeg,phrase,reference_jpeg)
             if self.mode != 'off':
                 try:
                     saved = json.loads(self._path(identity).read_text(encoding='utf-8'))
@@ -174,7 +187,7 @@ class ReadBackClient:
                     error = 'cache_miss'
                 else:
                     self._calls += 1
-                    response = asyncio.run(self._call(jpeg,phrase))
+                    response = asyncio.run(self._call(jpeg,phrase,reference_jpeg=reference_jpeg))
                     raw_usage = getattr(response,'usage',None)
                     usage = raw_usage.model_dump() if hasattr(raw_usage,'model_dump') else dict(raw_usage or {})
                     inp, out = max(0,int(usage.get('input_tokens',0))), max(0,int(usage.get('output_tokens',0)))
@@ -212,9 +225,11 @@ class ReadBackClient:
                 error = 'timeout' if type(exc).__name__ == 'APITimeoutError' else 'network'
         finally:
             duration = (self._clock()-start)*1000
-            result = ReadBack(ident,frame_id,phrase,answer['matches_request'] if answer and not error else None,
+            matches=(answer['same_object'] if reference_jpeg else answer['matches_request']) if answer and not error else None
+            result = ReadBack(ident,frame_id,phrase,matches,
                 answer['object_name'] if answer and not error else None, answer['hint'] if answer and not error else None,
-                float(answer['confidence']) if answer and not error else None,duration,error)
+                float(answer['confidence']) if answer and not error else None,duration,error,
+                same_object=answer['same_object'] if answer and not error else None,mode='pair' if reference_jpeg else 'single')
             try:
                 self._finish(result,usage,cost,cached)
             finally:

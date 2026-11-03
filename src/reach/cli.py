@@ -44,6 +44,7 @@ def parser():
     run.add_argument('--spark-cache', choices=['off','read','write'])
     run.add_argument('--record', action='store_true', help='Save local overlay video and stereo output audio')
     run.add_argument('--record-format', choices=['mp4','avi'], default='mp4')
+    run.add_argument('--overlay-scale',type=int,choices=[1,2],default=1)
     run.add_argument('--speech-every', type=float, default=0, help='Optional interval for a local speech load probe')
     run.add_argument("--trial-seed", type=int, default=1)
     run.add_argument("--trial-seconds", type=float, default=45)
@@ -57,8 +58,10 @@ def parser():
     speak.add_argument('--log-dir', type=Path, default=Path('runs/speech'))
     report = commands.add_parser("report", help="Summarize one saved run")
     report.add_argument("run_dir", type=Path)
+    report.add_argument('--html',type=Path,metavar='OUT.html',help='Write a self-contained event timeline')
     probe = commands.add_parser('readback-probe', help='Measure standard Spark on a saved crop (uploads that image)')
     probe.add_argument('image', type=Path)
+    probe.add_argument('--reference',type=Path,help='Clean crop of the target before reaching')
     probe.add_argument('--phrase', required=True)
     probe.add_argument('--wrong-image', type=Path, help='Known wrong-object crop for the same requested phrase')
     probe.add_argument('--config', type=Path)
@@ -184,6 +187,10 @@ def main(argv=None):
             if replayed.get('stripped'): print('Events-only copy: '+replayed['stripped'])
             return 0
         if args.command == "report":
+            if args.html:
+                from .session_report import write_html
+                print(json.dumps(write_html(args.run_dir,args.html),indent=2))
+                return 0
             from .session_report import summarize
             print(json.dumps(summarize(args.run_dir), indent=2))
             return 0
