@@ -74,7 +74,6 @@ class VoiceClient:
         self._last_code = None
         self._error = None
         self._input_name = None
-        self._stereo_ok = True
         self._latencies = deque(maxlen=1200)
         self._local_latencies = deque(maxlen=1200)
         self._endpoint = EnergyEndpoint()
@@ -168,18 +167,12 @@ class VoiceClient:
             else:
                 device, host, info = select_input(self.cfg)
                 self._input_name = info['name']
+                if sys.platform == 'darwin' and 'airpods' in self._input_name.casefold():
+                    raise ValueError('Choose the MacBook microphone; the AirPods microphone disables stereo guidance')
                 extra = sd.WasapiSettings(auto_convert=True) if host == 'Windows WASAPI' else None
                 self._stream = self._stream_factory(device=device, samplerate=24000, channels=1,
                     dtype='int16', blocksize=1920, latency='low', extra_settings=extra, callback=self._callback)
                 self._stream.start()
-                if self._output_probe:
-                    output = self._output_probe()
-                    from .speech_devices import stereo_warning
-                    warning = stereo_warning(output, input_name=self._input_name)
-                    self._stereo_ok = warning is None
-                    if not self._stereo_ok:
-                        self._session_event('error', reason=warning)
-                        print(f'STEREO UNAVAILABLE: guidance is muted. {warning}', file=sys.stderr, flush=True)
             attempts = 0
             while not self._stop_event.is_set():
                 code = None
@@ -237,7 +230,7 @@ class VoiceClient:
         return {'authorization': {'accessToken': 'Bearer '+self._key}, 'audioEncoding': 'PCM_24KHZ',
                 'model': self.cfg.get('model', 'muse-voice-transcribe-1.0'), 'mode': mode,
                 'partialMode': 'CUMULATIVE', 'emitAudioProgress': True,
-                'languageBias': ['English'], 'keywords': self._keywords()}
+                'languageBias': self.cfg.get('language_bias', ['English']), 'keywords': self._keywords()}
 
     async def _ack(self, ws, mode):
         self._session_event('open', mode)
@@ -308,6 +301,7 @@ class VoiceClient:
                 extra={'source':'spark_parse'}
                 if 'language' in Command.__dataclass_fields__:
                     extra['language']=result.language
+                    extra['spoken_phrase']=result.spoken_phrase
                 command=Command(result.intent,result.target_phrase if result.intent=='find' else None,
                     original.transcript,original.turn_id,self._clock(),**extra)
                 self._emit('nl_parse',{'event':'accepted','request_id':result.request_id,'intent':result.intent,
@@ -455,7 +449,7 @@ class VoiceClient:
                 'streamed_audio_s':self._streamed_samples/24000,
                 'ptt_p50_ms': float(np.median(ptt)) if ptt else None, 'ptt_p95_ms': float(np.percentile(ptt, 95)) if ptt else None,
                 'input_name': self._input_name, 'last_transcript': self._last_transcript,
-                'stereo_ok': self._stereo_ok, 'ptt_active': self._ptt_pending, 'error': self._error}
+                'ptt_active': self._ptt_pending, 'error': self._error}
 
     def toggle_ptt(self):
         if self._loop is None or not self._connected or self._loop.is_closed():

@@ -1,11 +1,23 @@
 """Read shared defaults and optional machine-specific overrides."""
 
 from copy import deepcopy
+import math
 from pathlib import Path
 
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def scene_deadline(cfg: dict) -> float:
+    value = cfg.get('scene', {}).get('deadline_s', 6.0)
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ValueError('scene deadline must be a finite number above 0 and at most 20 seconds') from None
+    if isinstance(value, bool) or not math.isfinite(seconds) or not 0 < seconds <= 20:
+        raise ValueError('scene deadline must be a finite number above 0 and at most 20 seconds')
+    return seconds
 
 
 def _merge(base: dict, changes: dict) -> dict:

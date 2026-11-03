@@ -83,6 +83,21 @@ def test_reference_requires_an_observation_of_the_same_image():
     assert capture_reference(camera,target,observed_absent,1) is not None
 
 
+def test_query_id_change_preserves_clean_reference_through_occlusion():
+    from dataclasses import replace
+    camera=NS(get=lambda frame:np.zeros((100,100,3),np.uint8))
+    target=TargetObs(1,'bottle',(Instance('0',(20,20,60,60),.9,None),),0,'sam',0)
+    clear=HandObs(1,False,None,None,(),(0,0),0)
+    first=capture_reference(camera,target,clear,1)
+    refreshed=replace(target,frame_id=2,instances=(replace(target.instances[0],sam_id='1'),))
+    covered=HandObs(2,True,(40,40),None,((20,20),(70,70)),(0,0),1)
+    assert capture_reference(camera,refreshed,covered,2,first) is first
+    assert capture_reference(camera,replace(refreshed,phrase='mug'),covered,2,first) is None
+    clear=replace(clear,frame_id=2)
+    latest=capture_reference(camera,refreshed,clear,2,first)
+    assert latest['frame_id']==2 and latest['sam_id']=='1' and latest is not first
+
+
 @pytest.mark.parametrize('effect',[Effect('set_phrase',text='pen'),
     Effect('choose_instance',payload={'sam_id':'other'}),
     Effect('exclude_instance',payload={'frame_id':1,'box_xyxy':(1,2,3,4)})])
@@ -143,3 +158,26 @@ def test_scene_rate_limit_is_not_retried():
     assert not client.request(2,b'image',2)
     assert finish(client).error=='http_429' and len(calls)==1
     client.stop()
+
+
+def test_scene_worker_uses_its_own_configured_deadline():
+    timeouts=[]
+    base=factory({'objects':[{'name':'mug','position':'middle'}]},[])
+    def make(**kw):
+        timeouts.append((kw['timeout'],kw['max_retries']))
+        return base(**kw)
+    client=SceneClient({'spark':{'deadline_s':.01},'scene':{'deadline_s':10}},client_factory=make)
+    try:
+        client.request(1,b'frame',10)
+        row=finish(client)
+        assert row.error is None and row.objects == (('mug','middle'),)
+        assert timeouts == [(10,0)]
+    finally:client.stop()
+
+
+@pytest.mark.parametrize('value',[0,-1,20.1,float('inf'),float('nan'),'invalid',True])
+def test_invalid_scene_deadlines_are_rejected_consistently(value):
+    from reach.brain import Brain
+    for constructor in (SceneClient,Brain):
+        with pytest.raises(ValueError,match='scene deadline'):
+            constructor({'scene':{'deadline_s':value}})

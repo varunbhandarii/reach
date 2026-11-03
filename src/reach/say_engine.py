@@ -2,6 +2,9 @@
 
 import subprocess
 import tempfile
+from hashlib import sha256
+import json
+import platform
 from pathlib import Path
 import wave
 import numpy as np
@@ -26,6 +29,7 @@ class SayEngine:
         self.rate=int(self.cfg.get('rate',210))
         self._run=run
         self._cache={}
+        self.disk_hits = 0
         if not 50<=self.rate<=600:raise ValueError('speech rate must be 50 to 600 words per minute')
 
     def synthesize(self, text, sample_rate=48000):
@@ -35,6 +39,27 @@ class SayEngine:
         key=(self.voice,self.rate,sample_rate,float(self.cfg.get('trim_db',-40)),text)
         if key in self._cache:
             return self._cache[key].copy()
+        # Only named voices have a stable persistent identity. An unspecified
+        # system default may change outside the app, so it stays memory-only.
+        cached = None
+        directory = self.cfg.get('cache_dir')
+        if directory and self.voice:
+            from .config import PROJECT_ROOT
+            directory = Path(directory)
+            if not directory.is_absolute(): directory = PROJECT_ROOT/directory
+            identity = json.dumps([1, platform.mac_ver()[0], *key], ensure_ascii=False)
+            cached = directory/(sha256(identity.encode()).hexdigest()+'.npy')
+            try:
+                samples = np.load(cached, allow_pickle=False)
+                if (samples.dtype != np.float32 or samples.ndim != 1 or not 0 < len(samples) <= 120*sample_rate
+                        or not np.isfinite(samples).all() or not np.any(np.abs(samples) > 1e-4)
+                        or np.max(np.abs(samples)) > 1):
+                    raise ValueError('Invalid speech cache samples')
+                self._cache[key] = samples
+                self.disk_hits += 1
+                return samples.copy()
+            except (OSError, ValueError, EOFError):
+                pass
         with tempfile.TemporaryDirectory(prefix='reach-speech-') as directory:
             path=Path(directory)/'speech.wav'
             args=['/usr/bin/say','-o',str(path),'--file-format=WAVE',f'--data-format=LEI16@{sample_rate}','-r',str(self.rate)]
@@ -56,6 +81,18 @@ class SayEngine:
                     raise ValueError('speech output is empty or silent')
                 trimmed=trim_silence(data,sample_rate,float(self.cfg.get('trim_db',-40)))
                 self._cache[key]=trimmed
+                if cached is not None:
+                    temporary = None
+                    try:
+                        cached.parent.mkdir(parents=True, exist_ok=True)
+                        with tempfile.NamedTemporaryFile(dir=cached.parent, suffix='.tmp', delete=False) as stream:
+                            temporary = Path(stream.name)
+                            np.save(stream, trimmed, allow_pickle=False)
+                        temporary.replace(cached)
+                    except OSError:
+                        pass  # Synthesis still succeeded if optional disk caching failed.
+                    finally:
+                        if temporary: temporary.unlink(missing_ok=True)
                 return trimmed.copy()
             except (OSError,ValueError,wave.Error,subprocess.SubprocessError):
                 raise RuntimeError('macOS speech synthesis failed; check the installed voice and say command') from None

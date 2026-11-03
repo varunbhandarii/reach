@@ -63,12 +63,13 @@ def _load(root):
         raise ReplayError('Replay inputs need a saved manifest.json') from None
     if not isinstance(manifest,dict) or not isinstance(manifest.get('config'),dict):
         raise ReplayError('Replay inputs need manifest.config with the reducer settings')
-    if manifest.get('contract_version') in ('3','4'):
+    if manifest.get('contract_version') in ('3','4','5'):
         # Old snapshots omit newly optional message fields. Restore their defaults
         # in memory so wrapper-effect comparisons stay meaningful across versions.
         for incoming,_ in pairs:
             incoming['commands']=[plain(Command(**row)) for row in incoming.get('commands',())]
-            incoming['results']=[plain(ReadBack(**row)) for row in incoming.get('results',())]
+            incoming['results']=[plain(ReadBack(**row)) if 'objects' not in row else row
+                                 for row in incoming.get('results',())]
     return manifest,pairs,decisions
 
 
@@ -90,6 +91,8 @@ def _strip(output,manifest,pairs):
         inputs=deepcopy(inputs)
         for command in inputs.get('commands',[]):
             command['transcript']=' '.join(str(value) for value in (command['kind'],command.get('phrase')) if value)
+            if command.get('spoken_phrase') is not None:
+                command['spoken_phrase'] = command.get('phrase')
         decision,effects=brain.step(inputs['now'],**restore_inputs(inputs))
         actual=plain(decision)
         if first_difference(expected['decision'],actual):

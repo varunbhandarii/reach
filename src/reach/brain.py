@@ -10,13 +10,16 @@ from dataclasses import asdict, replace
 import math
 from .contact import ContactRule, ContactState
 from .controller import target_center, predict_tip, map_vector
-from .types import Decision, Effect
+from .types import Decision, Effect, ReadBack, SceneList
 from .session_codec import plain, replay_config
+from .safety import blocked_term, REFUSAL
+from .config import scene_deadline
 
 
 class Brain:
     def __init__(self, cfg=None, objects=('wallet','pen','ball','apple')):
         self.cfg = cfg or {}
+        self._scene_deadline = scene_deadline(self.cfg)
         self.params = self.cfg.get('brain', {})
         self.objects = tuple(objects)
         self.contact = ContactRule(self.cfg)
@@ -40,13 +43,25 @@ class Brain:
         self._ask_until = None
         self._ask_asked = False
         self._ask_suppressed_until = 0.0
+        self._scene_pending = None
+        self.last_scene = ()
+        self.language = 'en'
+        self.spoken_phrase = None
+        self._safety_blocked = False
 
     def _number(self, key, default):
         return float(self.params.get(key, default))
 
     def _speak(self, effects, text, key, priority=1):
         self._last_spoken = (text,key,priority)
-        effects.append(Effect('speak', text, key, priority))
+        payload = ({'language': self.language, 'spoken_phrase': self.spoken_phrase}
+                   if self.language != 'en' else None)
+        effects.append(Effect('speak', text, key, priority, payload))
+
+    def _command_language(self, command):
+        # The reducer is platform-independent; the speaker keeps Windows English.
+        self.language = 'hi' if (command.language or 'en').split('-')[0].casefold() == 'hi' else 'en'
+        self.spoken_phrase = command.spoken_phrase
 
     def _name(self):
         return f'the {self.phrase}' if self.phrase else 'the selected point'
@@ -55,7 +70,7 @@ class Brain:
         old = self.state
         if old == state and not force:
             return
-        rate = lambda s: 'IDLE' if s in ('IDLE','CONTACT','CONFIRMING','DONE') else 'GUIDING' if s=='DISAMBIGUATING' else s
+        rate = lambda s: 'IDLE' if s in ('IDLE','CONTACT','CONFIRMING','DONE','DESCRIBING') else 'GUIDING' if s=='DISAMBIGUATING' else s
         self.state, self.entered = state, now
         effects.append(Effect('log', key='state', payload={'from':old,'to':state,'reason':reason,'phrase':self.phrase}))
         if rate(old) != rate(state) or force:
@@ -69,11 +84,14 @@ class Brain:
         self._target_missing = None
         self._search_start = None
         self._pending = self._disambiguation = None
+        self._scene_pending = None
         self._ask_until = self._ask_started = None
         self.contact.reset()
         effects.append(Effect('set_phrase', text=None))
 
     def _find(self, now, phrase, effects):
+        self._safety_blocked = False
+        self._scene_pending = None
         if (self.phrase == phrase and self.state in ('SEARCHING','GUIDING')):
             effects.append(Effect('force_query'))
             self._speak(effects,'Checking.','checking',0)
@@ -173,6 +191,8 @@ class Brain:
     def _readback_results(self, now, results, effects):
         changed = False
         for result in results:
+            if not isinstance(result, ReadBack):
+                continue
             pending = self._pending
             matches = (self.state=='CONFIRMING' and pending is not None and
                        result.request_id==pending['request_id'] and result.target_frame_id==pending['frame_id']
@@ -228,8 +248,53 @@ class Brain:
             changed = True
         return changed
 
+    def _scene_results(self, now, results, effects, flipped):
+        changed = False
+        for result in results:
+            if not isinstance(result, SceneList):
+                continue
+            pending = self._scene_pending
+            if (self.state != 'DESCRIBING' or pending is None
+                    or result.request_id != pending['request_id']
+                    or (pending['frame_id'] is not None and result.frame_id != pending['frame_id'])
+                    or now-self.entered >= self._scene_deadline):
+                effects.append(Effect('log', key='scene_ignore', payload={
+                    'request_id': result.request_id, 'reason': 'stale_or_unmatched'}))
+                continue
+            self._scene_pending = None
+            changed = True
+            if result.error:
+                self._speak(effects, "I couldn't look around just now.", 'describe_error')
+            else:
+                objects = []
+                for name, position in result.objects[:6]:
+                    name = ' '.join(name.split()[:3])[:35]
+                    if not name or position not in ('left', 'middle', 'right'):
+                        continue
+                    if flipped:
+                        position = {'left': 'right', 'right': 'left', 'middle': 'middle'}[position]
+                    objects.append((name, position))
+                self.last_scene = tuple(objects)
+                safe, hazards = [], []
+                for name, position in objects:
+                    if blocked_term(name, self.cfg):
+                        hazards.append(name)
+                    else:
+                        location = 'in the middle' if position == 'middle' else f'on your {position}'
+                        safe.append(f'a {name} {location}')
+                if not objects:
+                    self._speak(effects, "I don't see anything I can name.", 'scene_empty')
+                if hazards:
+                    self._speak(effects, 'Careful, there is a '+' and a '.join(hazards)+'.', 'hazard', 2)
+                for i in range(0, len(safe), 3):
+                    items = safe[i:i+3]
+                    text = ', '.join(items[:-1])+' and '+items[-1] if len(items)>1 else items[0]
+                    self._speak(effects, f'I can see {text}.', 'scene_list', 1 if i == 0 else 0)
+            self._transition(now, 'IDLE', effects, 'describe_result')
+        return changed
+
     def step(self, now, *, hand=None, target=None, perception_stats=None, commands=(), speaking=False,
-             frame_size=(640,480), flipped=False, results=()):
+             frame_size=(640,480), flipped=False, results=(), frame_id=None):
         if not math.isfinite(now) or (self._last_now is not None and now < self._last_now):
             raise ValueError('session timestamps must be finite and ordered')
         if min(frame_size)<=0:
@@ -238,10 +303,12 @@ class Brain:
         stats=perception_stats or {}
         commands=tuple(commands)
         results=tuple(results)
-        observed_stats = {key: stats[key] for key in ('stale','ambiguous','voice_online','voice_offline','consecutive_errors') if key in stats}
+        observed_stats = {key: stats[key] for key in ('stale','ambiguous','voice_online','voice_offline','consecutive_errors','hand_held') if key in stats}
         snapshot = plain(dict(seq=self._seq, now=now, hand=hand, target=target, perception_stats=observed_stats,
                               commands=commands, results=results, speaking=speaking,
                               frame_size=frame_size, flipped=flipped))
+        if frame_id is not None:
+            snapshot['frame_id'] = frame_id
         effects=[Effect('log', key='brain_in', payload=snapshot)]
         # Stop dominates a queued batch so a cancelled search never reaches I/O.
         stopping=next((c for c in reversed(commands) if c.kind in ('stop','cancel','start_over')),None)
@@ -252,11 +319,34 @@ class Brain:
             text,key = ('Ready.','ready') if stopping.kind=='start_over' else ('Cancelled.','cancelled') if veto else ('Stopped.','stopped')
             self._speak(effects,text,key,2)
             return self._decision(now,hand,target,None,effects)
+        blocked = next(((c, blocked_term(c.phrase, self.cfg)) for c in commands
+                        if c.kind == 'find' and blocked_term(c.phrase, self.cfg)), None)
+        if blocked:
+            command, term = blocked
+            self._command_language(command)
+            effects.append(Effect('cancel_speech'))
+            self._clear(now, effects, 'safety_block')
+            self._safety_blocked = True
+            effects.append(Effect('log', key='safety_block', payload={
+                'phrase': command.phrase, 'term': term, 'source': command.source}))
+            self._speak(effects, REFUSAL, 'safety_refusal', 2)
+            return self._decision(now, hand, target, None, effects)
         for command in commands:
             if command.kind=='find' and command.phrase:
                 phrase=command.phrase.strip()
                 if len(phrase)<=120 and not any(c in phrase for c in ',;\n'):
+                    self._command_language(command)
                     self._find(now,phrase,effects)
+            elif command.kind == 'describe' and self.state != 'CONFIRMING':
+                self._command_language(command)
+                effects.append(Effect('cancel_speech'))
+                self._clear(now, effects, 'describe')
+                self._request_id += 1
+                scene_frame = frame_id if frame_id is not None else hand.frame_id if hand else target.frame_id if target else None
+                self._scene_pending = {'request_id': self._request_id, 'frame_id': scene_frame}
+                self._transition(now, 'DESCRIBING', effects, 'describe')
+                effects.append(Effect('describe', payload=dict(self._scene_pending)))
+                self._speak(effects, 'Looking around.', 'describing', 0)
             elif command.kind=='no' and self.state=='SEARCHING' and now-self.entered<=self._number('veto_s',1.2)+1e-9:
                 effects.append(Effect('cancel_speech'));self._clear(now,effects,'veto')
                 self._speak(effects,'Cancelled.','cancelled',2)
@@ -288,11 +378,13 @@ class Brain:
 
         if self._readback_results(now, results, effects):
             target = None  # Never guide using the just-rejected observation.
+        if self._scene_results(now, results, effects, flipped):
+            target = None
         center=target_center(target)
         target_ok=(center is not None and not stats.get('stale',False)
                    and target.phrase == (self.phrase or ''))
         # Mouse click targets have no phrase and no network request.
-        if center is not None and target.phrase=='' and self.state not in ('CONTACT','CONFIRMING','DONE'):
+        if center is not None and target.phrase=='' and not self._safety_blocked and self.state not in ('CONTACT','CONFIRMING','DONE','DESCRIBING'):
             if self.phrase != '' or self.state=='IDLE':
                 self.phrase='';self.contact.reset();self._many_notice=False
                 self._transition(now,'GUIDING',effects,'clicked_target')
@@ -362,6 +454,11 @@ class Brain:
             elif not self._target_notice and elapsed+1e-9>=self._number('target_lost_speak_s',2):
                 self._target_notice=True
                 self._speak(effects,f'Lost {self._name()}. Hold the phone still.','target_lost')
+        elif state == 'DESCRIBING':
+            if now-self.entered >= self._scene_deadline:
+                self._scene_pending = None
+                self._speak(effects, "I couldn't look around just now.", 'describe_error')
+                self._transition(now, 'IDLE', effects, 'describe_timeout')
         elif state=='CONFIRMING':
             elapsed=now-self.entered
             if elapsed+1e-9>=float(self.cfg.get('spark',{}).get('deadline_s',6)):
@@ -383,8 +480,13 @@ class Brain:
 
         cue=None
         if self.state=='GUIDING' and target_ok and hand_ok:
-            contact=(self.contact.update(now,hand,target) if self.cfg.get('contact',{}).get('enabled',True)
-                     else ContactState())
+            if self.cfg.get('contact',{}).get('enabled',True) and not stats.get('hand_held', False):
+                contact = self.contact.update(now, hand, target)
+            else:
+                # A held pose is useful for brief guidance continuity, but its
+                # zero velocity is not evidence that a fresh fingertip is still.
+                self.contact.update(now, None, None)
+                contact = ContactState()
             self.contact_state=contact
             if contact != self._last_contact:
                 effects.append(Effect('log',key='contact',payload={'event':'fire' if contact.fired else 'change',

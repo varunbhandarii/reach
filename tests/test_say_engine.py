@@ -50,3 +50,33 @@ def test_prerender_avoids_repeated_synthesis_and_cache_is_independent():
     assert engine.pre_render(['Checking.'])==1
     a=engine.synthesize('Checking.');a[:]=0
     assert engine.synthesize('Checking.').max()>0 and len(calls)==1
+
+
+def test_named_voice_cache_survives_restart_and_rejects_corrupt_samples(tmp_path):
+    calls=[]
+    def run(args, **kwargs):
+        calls.append(args)
+        with wave.open(args[args.index('-o')+1], 'wb') as stream:
+            stream.setnchannels(1);stream.setsampwidth(2);stream.setframerate(48000)
+            stream.writeframes(np.full(4800, 12000, dtype='<i2').tobytes())
+    cfg={'voice': 'Lekha', 'cache_dir': str(tmp_path)}
+    first=SayEngine(cfg, run=run).synthesize('Checking.')
+    second=SayEngine(cfg, run=run)
+    assert np.array_equal(second.synthesize('Checking.'), first) and second.disk_hits==1 and len(calls)==1
+    cached,=tmp_path.glob('*.npy')
+    with cached.open('wb') as stream: np.save(stream, np.array([float('nan')], np.float32))
+    assert np.isfinite(SayEngine(cfg,run=run).synthesize('Checking.')).all() and len(calls)==2
+    SayEngine({**cfg, 'voice': 'Other'},run=run).synthesize('Checking.')
+    assert len(calls)==3
+
+
+def test_unnamed_default_voice_is_not_persisted(tmp_path):
+    calls=[]
+    def run(args, **kwargs):
+        calls.append(args)
+        with wave.open(args[args.index('-o')+1], 'wb') as stream:
+            stream.setnchannels(1);stream.setsampwidth(2);stream.setframerate(48000)
+            stream.writeframes(np.full(4800, 12000, dtype='<i2').tobytes())
+    cfg={'cache_dir': str(tmp_path)}
+    for _ in range(2): SayEngine(cfg,run=run).synthesize('Checking.')
+    assert len(calls)==2 and not list(tmp_path.glob('*.npy'))

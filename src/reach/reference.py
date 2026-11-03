@@ -22,7 +22,10 @@ def capture_reference(camera,target,hand,now,previous=None,long_side=512):
     if target is None or target.chosen is None or not 0<=target.chosen<len(target.instances):
         return previous
     item=target.instances[target.chosen]
-    if previous and (previous['sam_id']!=item.sam_id or previous['phrase']!=target.phrase):
+    # Detection IDs may change on a fresh query of the same requested object.
+    # Explicit phrase/instance/exclusion effects reset the cache in the runner.
+    # Preserve the last clear view through a refresh while the hand occludes it.
+    if previous and previous['phrase']!=target.phrase:
         previous=None
     if previous and now-previous['t_mono']<.5:
         return previous

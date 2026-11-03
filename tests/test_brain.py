@@ -146,6 +146,18 @@ def test_disabled_contact_keeps_guiding_without_chimes():
         assert 'contact' not in keys(e,'earcon')
 
 
+def test_held_pose_does_not_count_as_still_contact_and_resets_dwell():
+    b = guiding()
+    for i in range(1, 10):
+        d, e = step(b, .1+i*.05, hand=h(i, point=(150,150)), target=t(), hand_held=True)
+        assert d.state == 'GUIDING' and 'contact' not in keys(e, 'earcon')
+    for i in range(10, 13):
+        assert step(b, .1+i*.05, hand=h(i, point=(150,150)), target=t(), hand_held=False)[0].state == 'GUIDING'
+    for i in range(13, 18):
+        d, e = step(b, .1+i*.05, hand=h(i, point=(150,150)), target=t(), hand_held=False)
+    assert d.state == 'CONFIRMING'
+
+
 def test_prediction_setting_from_session_config_is_used():
     from dataclasses import replace
     moving=replace(h(),velocity_px_s=(100,0))

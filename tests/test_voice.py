@@ -140,23 +140,28 @@ def test_push_to_talk_buffers_before_ack_and_silences_endpointing():
     asyncio.run(scenario())
 
 
-def test_airpods_input_is_warned_even_when_metadata_reports_stereo(monkeypatch):
+def test_airpods_input_is_refused_before_opening_microphone(monkeypatch):
     import pytest
     pytest.importorskip('reach.speech_devices',reason='Shared device checks not integrated yet')
     events=[]
     client=None
     class Stream:
-        def __init__(self,**kwargs): pass
+        def __init__(self,**kwargs): pytest.fail('AirPods input must be refused before opening a stream')
         def start(self): client._stop_event.set()
         def stop(self): pass
         def close(self): pass
     monkeypatch.setattr('reach.voice.select_input',lambda cfg: (0,'Core Audio',{'name':'AirPods Pro'}))
+    monkeypatch.setattr('reach.voice.sys.platform', 'darwin')
     client=VoiceClient({},NS(emit=lambda kind,data: events.append((kind,data))),lambda c: None,
         stream_factory=Stream,api_key='synthetic',output_probe=lambda: {
             'name':'AirPods Pro','max_output_channels':2,'default_samplerate':48000})
-    asyncio.run(client._run())
-    assert not client.stats()['stereo_ok']
-    assert any('AirPods microphone' in data.get('reason','') for _,data in events)
+    with pytest.raises(ValueError, match='MacBook microphone'):
+        asyncio.run(client._run())
+
+
+def test_language_bias_is_sent_in_handshake():
+    client = VoiceClient({'voice': {'language_bias': ['English', 'Hindi']}}, None, lambda c: None, api_key='synthetic')
+    assert client._handshake('ENDPOINTING')['languageBias'] == ['English', 'Hindi']
 
 
 def test_real_grammar_preserves_command_provenance():

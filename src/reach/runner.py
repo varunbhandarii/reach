@@ -35,12 +35,15 @@ from .recording import OverlayRecorder
 from .session_codec import replay_config
 from .reference import capture_reference
 from .spark import SceneClient
+from .speech_devices import AudioRouteMonitor
+from .safety import blocked_term
 
 
 class Runner:
     def __init__(self, cfg, args, *, camera_factory=Camera, hand_factory=HandTracker,
                  audio_factory=CueEngine, perception_factory=Perception, brain_factory=None,
-                 voice_factory=VoiceClient, speaker_factory=Speaker, readback_factory=ReadBackClient,scene_factory=SceneClient):
+                 voice_factory=VoiceClient, speaker_factory=Speaker, readback_factory=ReadBackClient,scene_factory=SceneClient,
+                 route_probe=None):
         self.cfg, self.args = cfg, args
         self._resume = None
         retained = []
@@ -55,6 +58,7 @@ class Runner:
             brain_factory = Brain
         self.brain = brain_factory(cfg, cfg['objects'])
         self._accepts_results = 'results' in inspect.signature(self.brain.step).parameters
+        self._accepts_frame_id = 'frame_id' in inspect.signature(self.brain.step).parameters
         root = Path(args.log_dir or cfg.get("log", {}).get("dir", "runs"))
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         self.run_dir = root / stamp
@@ -89,6 +93,11 @@ class Runner:
         self._hand_stamp = 0.0
         self._fatal = None
         self._muted = args.mute
+        route_kwargs = {'probe': route_probe} if route_probe is not None else {}
+        if self.cfg.get('camera', {}).get('source') == 'file' and route_probe is None:
+            route_kwargs['platform'] = 'offline'
+        self._route = AudioRouteMonitor(**route_kwargs)
+        self._route_ok = True
         self._decision_count = 0
         self._started = None
         self._active_finished = None
@@ -140,10 +149,25 @@ class Runner:
         from .audio import select_output
         return select_output(self.cfg.get('audio', {}))[2]
 
+    def _check_audio_route(self, now):
+        status = self._route.poll(now)
+        if status is None:
+            return
+        self._route_ok = status['ok']
+        self.log.emit('audio_route', status)
+        if status['transition'] == 'lost':
+            self.audio.set(None)
+            extra = {'language': self.brain.language} if getattr(getattr(self, 'brain', None), 'language', 'en') != 'en' else {}
+            self.speaker.say('Stereo lost. Check your headphones.', key='stereo_lost', priority=2, **extra)
+        elif status['transition'] == 'recovered':
+            extra = {'language': self.brain.language} if getattr(getattr(self, 'brain', None), 'language', 'en') != 'en' else {}
+            self.speaker.say('Stereo is back.', key='stereo_back', priority=2, **extra)
+
     def post_command(self, command):
         trial = self._trial
         if (trial and trial.prepared and command.kind == 'find'
-                and command.phrase != trial.phrase):
+                and command.phrase != trial.phrase
+                and not blocked_term(command.phrase, getattr(self, 'cfg', {}))):
             self.log.emit('command', {**asdict(command), 'ignored_for_trial': True,
                                      'reason': 'scripted target is authoritative'})
             return
@@ -161,7 +185,7 @@ class Runner:
         for effect in effects:
             if effect.kind == 'speak':
                 if not (self._trial and self._trial.prepared and self._trial.started is None and effect.key == 'hand_lost'):
-                    self.speaker.say(effect.text, key=effect.key, priority=effect.priority)
+                    self.speaker.say(effect.text, key=effect.key, priority=effect.priority, **(effect.payload or {}))
             elif effect.kind == 'cancel_speech':
                 self.speaker.cancel()
             elif effect.kind == 'earcon':
@@ -219,12 +243,21 @@ class Runner:
                 self._excluded.append(dict(payload))
             elif effect.kind == 'describe':
                 value=self.camera.latest()
+                sent = False
                 if value is not None:
                     current,image=value
-                    if now-current.t_mono<=.5:
+                    requested = effect.payload.get('frame_id')
+                    if requested is not None:
+                        image = self.camera.get(requested)
+                    if image is not None and now-current.t_mono<=.5:
                         from .spark_images import encode_frame
                         jpeg=encode_frame(image,int(self.cfg.get('scene',{}).get('image_long_side',512)))
-                        self.scene.request(effect.payload['request_id'],jpeg,current.id)
+                        self.scene.request(effect.payload['request_id'],jpeg,requested if requested is not None else current.id)
+                        sent = True
+                if not sent:
+                    from .types import SceneList
+                    self._disabled_results.append(SceneList(effect.payload['request_id'],
+                        effect.payload.get('frame_id') or 0, (), 0., 'image_missing'))
             elif effect.kind == 'log':
                 kind,data = effect.key, effect.payload or {}
                 self.log.emit(kind, data)
@@ -256,19 +289,24 @@ class Runner:
             self._reference=capture_reference(self.camera,target,reference_hand,now,self._reference,
                 int(self.cfg.get('spark',{}).get('image_long_side',512)))
         stats = self.perception.stats()
+        stats['hand_held'] = bool(getattr(self.hand, 'held', False))
         voice = self.voice.stats() if self.voice else {'connected': True, 'stereo_ok': True}
         stats.update(voice_connected=voice['connected'], voice_online=voice['connected'], voice_offline=not voice['connected'])
         if flipped is None:
             flipped = self.args.flip == 'on' or (self.args.flip == 'auto' and self.hand.upside_down)
-        results = self.readback.poll() if self.readback else list(self._disabled_results)
+        results = self.readback.poll() if self.readback else []
+        results.extend(self._disabled_results)
         results.extend(self.scene.poll())
         self._disabled_results.clear()
         extra = {'results':tuple(results)} if self._accepts_results else {}
+        if self._accepts_frame_id:
+            newest = self.camera.latest()
+            extra['frame_id'] = newest[0].id if newest and now-newest[0].t_mono <= .5 else None
         decision, effects = self.brain.step(now, hand=hand, target=target, perception_stats=stats,
             commands=commands, speaking=self.speaker.busy,
             frame_size=(frame.width, frame.height) if frame else (640, 480), flipped=flipped,**extra)
         self._effects(effects, now)
-        self.audio.set(None if self._muted or not voice.get('stereo_ok', True) else decision.cue)
+        self.audio.set(None if self._muted or not self._route_ok else decision.cue)
         self._decision = decision
         self._decision_count += 1
         self.log.emit('decision', asdict(decision))
@@ -354,7 +392,10 @@ class Runner:
         if key == ord("q"):
             self._stop.set()
         elif self._trial and key == ord(" "):
-            self._trial.start(target_center(self.perception.latest()) is not None)
+            if getattr(self, '_route_ok', True):
+                self._trial.start(target_center(self.perception.latest()) is not None)
+            else:
+                self.log.emit('trial_block', {'reason': 'stereo_unavailable'})
         elif self._trial and key == ord("t"):
             self._trial.finish(True, "reported_touch", self._trial_actions)
         elif self._trial and key == ord("f"):
@@ -391,13 +432,14 @@ class Runner:
         latency = {"p50": float(np.median(self._latencies)), "p95": float(np.percentile(self._latencies, 95))} if self._latencies else None
         perception = self.perception.stats()
         voice = self.voice.stats() if self.voice else {'enabled':False}
+        voice = {**voice, 'stereo_ok': self._route_ok, 'audio_route': self._route.status}
         readback = self.readback.stats() if self.readback else {'enabled':False}
         scene=self.scene.stats()
         services=[readback,scene,voice.get('parse',{})]
         usage={key:sum(s.get(key,0) for s in services) for key in ('cost_usd','input_tokens','output_tokens')}
         cost = estimate(self.cfg,perception,voice,usage)
         return {"duration_s": elapsed, "capture": camera, "hand": hand,
-                "voice": self.voice.stats() if self.voice else {'enabled': False},
+                "voice": voice,
                 "speech": self.speaker.stats(), "contact": self._contact_signals,
                 "perception": perception, "audio": audio,"readback":readback,"scene":scene,"cost":cost,
                 "recording": {'video':self._overlay_recorder.stats() if self._overlay_recorder else None,
@@ -485,6 +527,7 @@ class Runner:
                     self.speaker.say('Ready.', key='ready', priority=0)
                     next_speech = now+self.args.speech_every
                 value = self.camera.latest()
+                self._check_audio_route(now)
                 if value is None:
                     if now-self._started > 5 or camera["eof"]:
                         raise RuntimeError("No usable frames received")
@@ -517,12 +560,19 @@ class Runner:
                 if (not self.args.headless or self._overlay_recorder) and now-last_draw >= 1/30:
                     stats = {**camera, **self.perception.stats(), **(metrics["hand"] if metrics else {})}
                     voice_status=self.voice.stats() if self.voice else {'enabled':False}
+                    voice_status = {**voice_status, 'stereo_ok': self._route_ok,
+                                    'audio_route': self._route.status}
                     readback_status=self.readback.stats() if self.readback else {'enabled':False}
                     scene_status=self.scene.stats()
+                    scene_status = {**scene_status, 'last': {'objects': getattr(self.brain, 'last_scene', ())}}
+                    reference=self._reference
+                    reference_ready=(bool(reference and target and reference['phrase']==target.phrase)
+                                     if self.readback else None)
                     usage=[readback_status,scene_status,voice_status.get('parse',{})]
                     spark_usage={key:sum(s.get(key,0) for s in usage)
                                  for key in ('cost_usd','input_tokens','output_tokens')}
                     stats.update(voice=voice_status,
+                                 reference_ready=reference_ready,
                                  speech=self.speaker.stats(), contact=self._contact_signals,
                                  readback=readback_status,
                                  scene=scene_status,

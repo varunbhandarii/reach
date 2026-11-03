@@ -47,7 +47,9 @@ def draw_overlay(image, hand, target, decision, stats, *, muted=False, trial=Non
     text(state+('  MUTED' if muted else ''),(10,29),.8)
     voice=stats.get('voice',{})
     online='off' if voice.get('enabled') is False else 'online' if voice.get('connected') else 'connecting'
-    text(f"{target.phrase if target else 'No target'} | Voice {online} | {stats.get('capture_fps',0):.0f} fps | ~${stats.get('estimated_cost_usd',0):.3f}",(10,52),.45)
+    reference_status=(' | Ref ready' if stats['reference_ready'] is True else
+                      ' | Ref waiting' if stats['reference_ready'] is False else ' | Ref off') if 'reference_ready' in stats else ''
+    text(f"{target.phrase if target else 'No target'} | Voice {online} | {stats.get('capture_fps',0):.0f} fps | ~${stats.get('estimated_cost_usd',0):.3f}{reference_status}",(10,52),.45)
     text('1-4 find | D describe | C cancel | V talk | M mute | Q quit',(10,73),.42)
     if trial:
         for i,line in enumerate(trial):
@@ -113,4 +115,6 @@ def draw_overlay(image, hand, target, decision, stats, *, muted=False, trial=Non
         text('ON LINE',(left,sound_top+111),.46,(100,240,180))
     if not enabled:
         text('STEREO UNAVAILABLE' if not muted else 'MUTED',(left,sound_top+111),.46,(90,160,255))
+    elif (voice.get('audio_route') or {}).get('status') == 'unknown':
+        text('ROUTE UNKNOWN: CHECK PREFLIGHT',(left,sound_top+111),.46,(90,160,255))
     return canvas

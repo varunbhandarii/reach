@@ -72,6 +72,7 @@ class Command:
     t_mono: float
     source: Literal["voice", "voice_fast", "ptt", "key", "trial", "spark_parse"] = "voice"
     language: str | None = None
+    spoken_phrase: str | None = None
 
 
 @dataclass(frozen=True)
