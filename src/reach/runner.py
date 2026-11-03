@@ -21,7 +21,7 @@ from .capture import Camera
 from .controller import target_center
 from .hand import HandTracker
 from .log import EventLog
-from .overlay import Captions, draw_overlay, layout_for
+from .overlay import Captions, complex_text_supported, draw_overlay, has_devanagari, layout_for
 from .perception import Perception
 from .trials import Trials
 from .types import CONTRACT_VERSION
@@ -100,6 +100,7 @@ class Runner:
         self._route = AudioRouteMonitor(**route_kwargs)
         self._route_ok = True
         self._captions = Captions()
+        self._shaping = complex_text_supported()
         self._ui_mode = getattr(args, 'ui', None) or ('presentation' if getattr(args, 'record', False) else 'debug')
         self._low_vision = False
         self._decision_count = 0
@@ -610,8 +611,11 @@ class Runner:
                     spark_usage={key:sum(s.get(key,0) for s in usage)
                                  for key in ('cost_usd','input_tokens','output_tokens')}
                     speech_status=self.speaker.stats()
+                    speaking = speech_status.get('text')
+                    if speaking and has_devanagari(speaking) and not self._shaping:
+                        speaking = speech_status.get('caption') or speaking  # English source text
                     self._captions.update(now, heard=voice_status.get('last_transcript') if self.voice else None,
-                                          speaking=speech_status.get('text'),
+                                          speaking=speaking,
                                           state=self._decision.state if self._decision else None)
                     stats.update(phrase=getattr(self.brain, 'phrase', None), route_ok=self._route_ok,
                                  master_db=getattr(self.audio, 'master_db', 0.0))

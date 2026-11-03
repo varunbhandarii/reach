@@ -30,6 +30,19 @@ PURPLE = (204, 121, 167)
 KEYS = ('1-4 find  ·  D describe  ·  C cancel  ·  V talk', 'M mute  ·  U view  ·  L low vision  ·  Q quit')
 
 
+def has_devanagari(text):
+    return any('\u0900' <= c <= '\u097f' for c in str(text or ''))
+
+
+def complex_text_supported():
+    """Devanagari needs Pillow's complex-script shaping; without it, show English captions."""
+    try:
+        from PIL import features
+        return bool(features.check('raqm'))
+    except Exception:
+        return False
+
+
 def bgr(rgb):
     return rgb[2], rgb[1], rgb[0]
 
@@ -105,7 +118,7 @@ class TextRenderer:
             self.available = False
 
     def font(self, px, bold=False, text=''):
-        role = ('devanagari' if any('ऀ' <= c <= 'ॿ' for c in text)
+        role = ('devanagari' if any('\u0900' <= c <= '\u097f' for c in text)
                 and self._paths['devanagari'].is_file() else 'bold' if bold else 'regular')
         key = role, int(px)
         if key not in self._fonts:
