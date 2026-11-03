@@ -29,6 +29,7 @@ def replay_config(cfg, objects=None):
                 'readback_wait_s','mismatch_confidence','disambiguate_s','ask_touch_enabled','ask_touch_s')
     contact_keys=('enabled','still_ms','refractory_s','box_grow','min_margin_px','still_speed','hold_frames','overlap_min')
     return plain({'brain': {key:value for key,value in cfg.get('brain',{}).items() if key in brain_keys},
+                  **({'scene': {'deadline_s': cfg['scene'].get('deadline_s', 6.0)}} if 'scene' in cfg else {}),
                   **({'safety': cfg['safety']} if 'safety' in cfg else {}),
                   'contact': {key:value for key,value in cfg.get('contact',{}).items() if key in contact_keys},
                   'audio': {'gain': cfg.get('audio', {}).get('gain', .2)},

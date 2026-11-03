@@ -13,11 +13,13 @@ from .controller import target_center, predict_tip, map_vector
 from .types import Decision, Effect, ReadBack, SceneList
 from .session_codec import plain, replay_config
 from .safety import blocked_term, REFUSAL
+from .config import scene_deadline
 
 
 class Brain:
     def __init__(self, cfg=None, objects=('wallet','pen','ball','apple')):
         self.cfg = cfg or {}
+        self._scene_deadline = scene_deadline(self.cfg)
         self.params = self.cfg.get('brain', {})
         self.objects = tuple(objects)
         self.contact = ContactRule(self.cfg)
@@ -255,7 +257,7 @@ class Brain:
             if (self.state != 'DESCRIBING' or pending is None
                     or result.request_id != pending['request_id']
                     or (pending['frame_id'] is not None and result.frame_id != pending['frame_id'])
-                    or now-self.entered >= 6):
+                    or now-self.entered >= self._scene_deadline):
                 effects.append(Effect('log', key='scene_ignore', payload={
                     'request_id': result.request_id, 'reason': 'stale_or_unmatched'}))
                 continue
@@ -453,7 +455,7 @@ class Brain:
                 self._target_notice=True
                 self._speak(effects,f'Lost {self._name()}. Hold the phone still.','target_lost')
         elif state == 'DESCRIBING':
-            if now-self.entered >= 6:
+            if now-self.entered >= self._scene_deadline:
                 self._scene_pending = None
                 self._speak(effects, "I couldn't look around just now.", 'describe_error')
                 self._transition(now, 'IDLE', effects, 'describe_timeout')

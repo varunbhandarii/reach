@@ -92,3 +92,52 @@ def test_describe_exact_replay_and_events_only_copy(tmp_path):
     (tmp_path/'manifest.json').write_text(json.dumps({'config': replay_config({}), 'contract_version': CONTRACT_VERSION}))
     assert replay_session(tmp_path, strip=tmp_path/'stripped')['status'] == 'ok'
     assert replay_session(tmp_path/'stripped')['status'] == 'ok'
+
+
+def test_scene_response_between_default_and_configured_deadline():
+    result = SceneList(1, 10, (('mug', 'middle'),), 6890)
+    b = Brain({'scene': {'deadline_s': 10}})
+    b.step(0, commands=[parse('describe')], frame_id=10)
+    assert b.step(6.1)[0].state == 'DESCRIBING'
+    d, _ = b.step(6.89, results=[result])
+    assert d.state == 'IDLE' and 'mug in the middle' in d.speech
+    assert b.last_scene == result.objects
+
+    default = Brain()
+    default.step(0, commands=[parse('describe')], frame_id=10)
+    assert default.step(6)[0].state == 'IDLE'
+    default.step(6.89, results=[result])
+    assert default.last_scene == ()
+
+
+def test_configured_scene_deadline_is_still_bounded():
+    b = Brain({'scene': {'deadline_s': 10}})
+    b.step(0, commands=[parse('describe')], frame_id=10)
+    assert b.step(9.999)[0].state == 'DESCRIBING'
+    assert b.step(10)[0].state == 'IDLE'
+    b.step(10.1, results=[SceneList(1, 10, (('pen', 'left'),), 10100)])
+    assert b.last_scene == ()
+
+
+@pytest.mark.parametrize('command,state', [('stop', 'IDLE'), ('cancel', 'IDLE'), ('find wallet', 'SEARCHING')])
+def test_slow_scene_cannot_undo_a_new_command(command, state):
+    b = Brain({'scene': {'deadline_s': 10}})
+    b.step(0, commands=[parse('describe')], frame_id=10)
+    d, _ = b.step(6.89, commands=[parse(command)], results=[SceneList(1, 10, (('pen', 'left'),), 6890)])
+    assert d.state == state and b.last_scene == ()
+
+
+def test_long_scene_deadline_survives_events_only_replay(tmp_path):
+    cfg = {'scene': {'deadline_s': 10, 'cache_dir': 'private-local-path'}}
+    b = Brain(cfg); rows = []
+    for now, kwargs in [(0, {'commands': [parse('describe')], 'frame_id': 10}),
+                        (6.89, {'results': [SceneList(1, 10, (('pen', 'left'),), 6890)]})]:
+        d, effects = b.step(now, **kwargs)
+        for kind, data in [('brain_in', effects[0].payload), ('brain_out', effects[-1].payload), ('decision', asdict(d))]:
+            rows.append({'type': kind, 'data': data, 't_mono': now})
+    clean = replay_config(cfg)
+    assert clean['scene'] == {'deadline_s': 10}
+    (tmp_path/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    (tmp_path/'manifest.json').write_text(json.dumps({'config': clean, 'contract_version': CONTRACT_VERSION}))
+    assert replay_session(tmp_path, strip=tmp_path/'stripped')['status'] == 'ok'
+    assert replay_session(tmp_path/'stripped')['status'] == 'ok'

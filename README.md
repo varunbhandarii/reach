@@ -204,8 +204,11 @@ explicitly uploads both saved images. Cache identities include both image hashes
 ## Scene listing and natural requests
 
 The scene client lists up to six visible objects and their image positions. Its
-worker runs independently of read-back, uses a six-second deadline and keeps a
-local cache for file sources. The default image size is 512 pixels on the long
+worker runs independently of read-back and keeps a local cache for file sources.
+The deadline defaults to six seconds. Set `scene.deadline_s` in the local config
+to allow a longer wait, up to twenty seconds; the worker and controller share
+this limit, and stop/cancel still take effect immediately. The default image
+size is 512 pixels on the long
 side with low detail; `scene.image_long_side` and `scene.detail` are configurable.
 Press **D** or ask "what's on the table?",
 then request one of the listed objects by name.

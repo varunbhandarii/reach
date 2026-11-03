@@ -158,3 +158,26 @@ def test_scene_rate_limit_is_not_retried():
     assert not client.request(2,b'image',2)
     assert finish(client).error=='http_429' and len(calls)==1
     client.stop()
+
+
+def test_scene_worker_uses_its_own_configured_deadline():
+    timeouts=[]
+    base=factory({'objects':[{'name':'mug','position':'middle'}]},[])
+    def make(**kw):
+        timeouts.append((kw['timeout'],kw['max_retries']))
+        return base(**kw)
+    client=SceneClient({'spark':{'deadline_s':.01},'scene':{'deadline_s':10}},client_factory=make)
+    try:
+        client.request(1,b'frame',10)
+        row=finish(client)
+        assert row.error is None and row.objects == (('mug','middle'),)
+        assert timeouts == [(10,0)]
+    finally:client.stop()
+
+
+@pytest.mark.parametrize('value',[0,-1,20.1,float('inf'),float('nan'),'invalid',True])
+def test_invalid_scene_deadlines_are_rejected_consistently(value):
+    from reach.brain import Brain
+    for constructor in (SceneClient,Brain):
+        with pytest.raises(ValueError,match='scene deadline'):
+            constructor({'scene':{'deadline_s':value}})

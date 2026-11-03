@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 
-from .config import PROJECT_ROOT
+from .config import PROJECT_ROOT,scene_deadline
 from .sam_client import retry_seconds
 
 
@@ -91,8 +91,8 @@ class JSONWorker:
         self.model=self.cfg.get('model','muse-spark-1.3')
         if self.model!='muse-spark-1.3':
             raise ValueError('Only standard muse-spark-1.3 is supported')
-        self.deadline=float(self.cfg.get('deadline_s',3 if kind=='parse' else 6))
-        if not 0<self.deadline<=(3 if kind=='parse' else 6):
+        self.deadline=scene_deadline(cfg) if kind=='scene' else float(self.cfg.get('deadline_s',3))
+        if kind=='parse' and not 0<self.deadline<=3:
             raise ValueError('Invalid service deadline')
         mode=self.cfg.get('cache','auto') if kind=='scene' else 'off'
         self.mode=('write' if cfg.get('camera',{}).get('source')=='file' else 'off') if mode=='auto' else mode
@@ -141,7 +141,7 @@ class JSONWorker:
                 return False
             self._busy=True
         self._emit('scene_req' if self.kind=='scene' else 'nl_parse',{'event':'request','request_id':ident,
-            **context,'model':self.model,'store':False,'body_sha256':identity['body_sha256']})
+            **context,'model':self.model,'store':False,'deadline_s':self.deadline,'body_sha256':identity['body_sha256']})
         self._thread=threading.Thread(target=self._work,args=(ident,body,context,identity),name=self.kind,daemon=True)
         self._thread.start()
         return True
