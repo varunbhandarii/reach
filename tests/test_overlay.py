@@ -89,6 +89,9 @@ def test_plain_language_state_card():
     lost={**stats,'voice':{'connected':True,'stereo_ok':False}}
     assert state_card(decision('GUIDING'),None,lost)[0].startswith('Stereo lost')
     assert [c[0] for c in chips(stats)]==['Voice','Stereo','Camera']
+    paused={**stats,'camera_ok':False}
+    assert state_card(decision('GUIDING'),None,paused)[0]=='Camera paused, reconnecting'
+    assert chips(paused,camera_ok=False)[2][2]=='no frames'
 
 
 def contrast(a,b):

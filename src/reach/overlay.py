@@ -226,6 +226,8 @@ def state_card(decision, target, stats, muted=False):
         return str(stats['error'])[:80], VERMILLION
     if voice.get('stereo_ok') is False or stats.get('route_ok') is False:
         return 'Stereo lost: check headphones', VERMILLION
+    if stats.get('camera_ok') is False:
+        return 'Camera paused, reconnecting', ORANGE
     state = decision.state if decision else 'IDLE'
     last = (stats.get('readback') or {}).get('last') or {}
     labels = {'IDLE': ('Ready', NEUTRAL), 'SEARCHING': (f'Looking for {name}', SKY),
@@ -440,7 +442,7 @@ class Screen:
         content = {'state': state_card(decision, target, stats, muted), 'heard': visible['heard'],
                    'said': visible['said'], 'sound': {'status': status, 'on_line': values['on_line']},
                    'check': check_lines(decision, target, stats, trial),
-                   'chips': chips(stats, camera_ok=image is not None),
+                   'chips': chips(stats, camera_ok=stats.get('camera_ok', True)),
                    'debug': debug_lines(stats) if mode == 'debug' else [],
                    'inset': low_vision and target_center(target) is not None}
         panel, sound_box = self._panel_image(layout, content)

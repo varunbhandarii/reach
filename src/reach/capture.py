@@ -27,6 +27,7 @@ class Camera:
         self._frames = deque(maxlen=int(self.cfg.get("ring_depth", 90)))
         self._cap = self._thread = None
         self._error = None
+        self._stalls = self._recoveries = 0
         self._eof = False
         self._received = self._duplicates = self._published = 0
         self._started = self._finished = None
@@ -70,11 +71,7 @@ class Camera:
                     response.read(256)
             except OSError:
                 raise RuntimeError("Could not pin orientation; set landscape in the phone app") from None
-        if self._backend == cv2.CAP_FFMPEG:
-            cap = self._factory(self._source, self._backend, [
-                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 1000])
-        else:
-            cap = self._factory(self._source, self._backend)
+        cap = self._create()
         if not cap.isOpened():
             cap.release()
             raise RuntimeError("Cannot open camera. Check source, permission and backend")
@@ -87,6 +84,23 @@ class Camera:
         self._fps = float(fps) if math.isfinite(fps) and fps > 0 else 30.0
         self._cap = cap
 
+    def _create(self):
+        if self._backend == cv2.CAP_FFMPEG:
+            return self._factory(self._source, self._backend, [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 1000])
+        return self._factory(self._source, self._backend)
+
+    def _event(self, event, **data):
+        if self.log is not None:
+            self.log.emit("camera", {"event": event, **data})
+
+    def _reopen(self):
+        """Reconnect a network stream after a stall; the next read shows whether it worked."""
+        self._cap.release()
+        self._cap = self._create()
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self._event("reopen", opened=bool(self._cap.isOpened()))
+
     def start(self):
         if self._thread is not None:
             raise RuntimeError("Camera may only be started once")
@@ -98,6 +112,8 @@ class Camera:
     def _read(self):
         previous = None
         index = failures = 0
+        outage = None
+        limit = float(self.cfg.get("reconnect_s", 15))
         try:
             while not self._stop.is_set():
                 if self.source == "file":
@@ -112,9 +128,23 @@ class Camera:
                         break
                     failures += 1
                     if failures >= 3:
-                        raise RuntimeError("Camera stopped delivering frames")
+                        if outage is None:
+                            outage = captured
+                            self._stalls += 1
+                            self._event("stalled")
+                        # A phone stream over Wi-Fi can pause; reconnect before giving up.
+                        if self.source == "android_mjpeg" and captured-outage < limit and not self._stop.is_set():
+                            self._reopen()
+                            failures = 0
+                            self._stop.wait(.5)
+                            continue
+                        raise RuntimeError(f"Camera stopped delivering frames for {captured-outage:.1f} s")
                     self._stop.wait(.05)
                     continue
+                if outage is not None:
+                    self._recoveries += 1
+                    self._event("recovered", outage_ms=round((captured-outage)*1000))
+                    outage = None
                 index += 1
                 failures = 0
                 self._received += 1
@@ -140,7 +170,7 @@ class Camera:
                         "duplicates_dropped": self._duplicates})
                     self.log.save_frame(frame.id, jpeg)
         except Exception as exc:
-            self._error = f"capture failed ({type(exc).__name__})"
+            self._error = f"capture failed ({type(exc).__name__}: {str(exc)[:120]})"
         finally:
             self._cap.release()
             self._finished = time.perf_counter()
@@ -174,7 +204,7 @@ class Camera:
                 "duplicate_rate": self._duplicates / max(1, self._received),
                 "capture_fps": self._received / elapsed, "published_fps": self._published / elapsed,
                 "native_fps": getattr(self, "_fps", None), "elapsed_s": elapsed,
-                "eof": self._eof, "error": self._error}
+                "eof": self._eof, "error": self._error, "stalls": self._stalls, "recoveries": self._recoveries}
 
     def stop(self):
         self._stop.set()
