@@ -113,7 +113,10 @@ def phrase_texts(objects):
              "Reach is ready. Say find and an object, or what's on the table.",
              "Say find and an object. What's on the table. Stop. Repeat. Louder or quieter.",
              'Louder.', 'Quieter.', "That's the loudest.", "That's the quietest.",
-             'Okay, less talking.', 'Okay, more talking.']
+             'Okay, less talking.', 'Okay, more talking.', 'Looking for the point.', 'Found the point.']
+    texts.extend(f'Found the point, {where}.' for where in
+        ('to your left', 'to your right', 'straight ahead', 'on your left, farther away', 'on your right, farther away',
+         'on your left, closer to you', 'on your right, closer to you', 'closer to you', 'right by your hand'))
     for obj in objects:
         texts.extend([f'Looking for the {obj}.', f"I can't see the {obj} yet. Move the phone slowly.",
             f"I couldn't find the {obj}.", f'Lost the {obj}. Hold the phone still.', f'I lost the {obj}.',

@@ -5,7 +5,7 @@ from reach.brain import Brain, GREETING, HELP
 from reach.grammar import parse
 from reach.types import Command, HandObs, Instance, TargetObs
 
-ON = {'brain': {'direction_words': 'plain', 'cancel_stale_prompts': True, 'greeting': True}}
+ON = {'brain': {'direction_words': 'plain', 'cancel_stale_prompts': True, 'greeting': True, 'point_words': 'plain'}}
 
 
 def command(kind, phrase=None):
@@ -179,3 +179,19 @@ def test_voice_offline_waits_for_a_connecting_session():
     # Saved runs have no setting and keep the immediate notice.
     _, effects = Brain({}).step(0, perception_stats={'voice_online': False})
     assert spoken(effects) == [('voice_off', 'Voice is offline. Use the keys.')]
+
+
+def test_clicked_points_are_named_simply_and_reclicks_stay_quiet():
+    brain = Brain(ON)
+    _, effects = brain.step(0, commands=[command('find', 'clicked point')])
+    assert ('looking', 'Looking for the point.') in spoken(effects)
+    target_point = TargetObs(1, 'clicked point', (Instance('p', (300, 200, 340, 260), None, None),), 0, 'tracker', 0)
+    hand = HandObs(5, True, (500, 100), (500, 100), (), (0, 0), 1)
+    _, effects = brain.step(1, hand=hand, target=target_point)
+    assert any(text.startswith('Found the point,') for _, text in spoken(effects))
+    _, effects = brain.step(2, hand=hand, target=target_point, commands=[command('find', 'clicked point')])
+    assert [e.kind for e in effects if e.kind == 'force_query'] and not spoken(effects)
+    # Saved runs keep their original wording.
+    legacy = Brain({})
+    _, effects = legacy.step(0, commands=[command('find', 'clicked point')])
+    assert ('looking', 'Looking for the clicked point.') in spoken(effects)

@@ -50,6 +50,7 @@ phrases:
   found_brief: '{object} की जगह पता चल गई है।'
 objects:
   wallet: बटुआ
+  point: चुनी हुई जगह
   pen: कलम
   ball: गेंद
   apple: सेब
