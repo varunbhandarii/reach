@@ -40,6 +40,7 @@ class Brain:
         self._search_start = self._last_prompt = self._target_missing = None
         self._hand_notice = self._target_notice = self._many_notice = False
         self._voice_notice = False
+        self._voice_down_since = None
         self._last_network = None
         self._last_spoken = None
         self._last_contact = None
@@ -524,8 +525,13 @@ class Brain:
         if target_ok and self.state in ('GUIDING','HAND_LOST') and stats.get('ambiguous') and not self._many_notice:
             self._many_notice=True;self._speak(effects,'I see more than one.','many',0)
         if stats.get('voice_online',True) is False or stats.get('voice_offline',False):
-            if not self._voice_notice:
+            # A session that is still connecting is not offline; wait before announcing it.
+            if self._voice_down_since is None:
+                self._voice_down_since = now
+            if not self._voice_notice and now-self._voice_down_since+1e-9 >= self._number('voice_offline_after_s', 0):
                 self._voice_notice=True;self._speak(effects,'Voice is offline. Use the keys.','voice_off')
+        else:
+            self._voice_down_since = None
         if self.state in ('SEARCHING','GUIDING','TARGET_LOST') and stats.get('consecutive_errors',0)>=2:
             if self._last_network is None or now-self._last_network+1e-9>=self._number('network_speak_every_s',15):
                 self._last_network=now;self._speak(effects,'Connection problem. Still trying.','network')

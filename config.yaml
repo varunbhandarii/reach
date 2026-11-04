@@ -57,6 +57,7 @@ brain:
   volume_step_db: 3
   volume_min_db: -12
   volume_max_db: 6
+  voice_offline_after_s: 5
 voice:
   model: muse-voice-transcribe-1.0
   mode: ENDPOINTING

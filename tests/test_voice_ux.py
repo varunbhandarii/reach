@@ -156,3 +156,26 @@ def test_startup_failures_get_a_plain_fix(message, spoken):
     said, printed = explain(ValueError(message))
     assert said == spoken and printed
     assert not speak_once(said)  # never plays sound during tests
+
+
+@pytest.mark.parametrize('text,phrase', [
+    ('find thefind the wallet', 'wallet'), ('find the um find the wallet', 'wallet'),
+    ('find my um wallet', 'wallet'), ('look for the blue pen', 'blue pen'), ('find the pen', 'pen')])
+def test_restarted_or_hesitant_requests_name_the_last_object(text, phrase):
+    command = parse(text, vocabulary=('blue mug',))
+    assert command.kind == 'find' and command.phrase == phrase
+
+
+def test_voice_offline_waits_for_a_connecting_session():
+    brain = Brain({'brain': {'voice_offline_after_s': 5}})
+    for t in (0, 2, 4):
+        _, effects = brain.step(t, perception_stats={'voice_online': False})
+        assert not spoken(effects)
+    _, effects = brain.step(4.5, perception_stats={'voice_online': True})
+    _, effects = brain.step(6, perception_stats={'voice_online': False})
+    assert not spoken(effects)  # the wait restarts after a reconnect
+    _, effects = brain.step(11, perception_stats={'voice_online': False})
+    assert spoken(effects) == [('voice_off', 'Voice is offline. Use the keys.')]
+    # Saved runs have no setting and keep the immediate notice.
+    _, effects = Brain({}).step(0, perception_stats={'voice_online': False})
+    assert spoken(effects) == [('voice_off', 'Voice is offline. Use the keys.')]

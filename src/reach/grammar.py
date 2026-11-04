@@ -27,7 +27,7 @@ def normalize(text):
 
 
 def clean_phrase(phrase, vocabulary):
-    words = phrase.split()
+    words = [word for word in phrase.split() if word not in ('um', 'uh', 'er', 'erm')]
     while words and words[0] in ("the", "my", "a", "an"):
         words.pop(0)
     phrase = ' '.join(words)
@@ -68,6 +68,10 @@ def parse(transcript, objects=DEFAULT_OBJECTS, vocabulary=(), *, t_mono=0.0, tur
     if choice:
         return command('choose', 'farther' if choice[1]=='ahead' else choice[1])
     find = re.fullmatch(r'(?:find|look for|where is|locate|search for|show me) (.+)', text)
+    if find:
+        # A restarted request can arrive merged ("find thefind the wallet"); use the last request verb.
+        last = re.fullmatch(r'.*(?:find|look for|where is|locate|search for|show me) (.+)', text)
+        find = last or find
     known = tuple(normalize(word) for word in objects)
     vocab = sorted(set(known) | {normalize(word) for word in vocabulary})
     candidate = find[1] if find else text if text in known or re.sub(r'^(?:the|my|a|an) ', '', text) in known else None
