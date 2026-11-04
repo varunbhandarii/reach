@@ -7,7 +7,10 @@ import sys
 _RULES = (
     (('hand model missing',), 'The hand model is missing.',
      'Hand model missing: save hand_landmarker.task as models/hand_landmarker.task (see README), or set hand.model_path.'),
-    (('cannot open camera', 'camera stopped delivering', 'no usable frames', 'camera.path', 'camera source',
+    (('camera stopped delivering',), 'The camera stream stopped.',
+     'Camera stream stopped: keep the phone screen on and its camera app running, stay near the Wi-Fi router, '
+     'then start again. A USB link is steadier: adb forward tcp:8080 tcp:8080 and camera.url http://127.0.0.1:8080/video.'),
+    (('cannot open camera', 'no usable frames', 'camera.path', 'camera source',
       'pin orientation'), "I can't open the camera.",
      'Camera: check the source and permissions. Run `reach setup` to list cameras, or pass --source.'),
     (('model api key missing',), 'The API key is missing.',

@@ -618,6 +618,7 @@ class Runner:
                                           speaking=speaking,
                                           state=self._decision.state if self._decision else None)
                     stats.update(phrase=getattr(self.brain, 'phrase', None), route_ok=self._route_ok,
+                                 camera_ok=now-frame.t_mono <= .5,
                                  master_db=getattr(self.audio, 'master_db', 0.0))
                     stats.update(voice=voice_status,
                                  reference_ready=reference_ready,
