@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" font-family="Atkinson Hyperlegible, Segoe UI, Arial, sans-serif">
+<title>Reach architecture</title>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5B6573"/></marker></defs>
+<rect width="1600" height="900" fill="#FFFFFF"/>
+<text x="30" y="45" font-size="30" font-weight="700" fill="#101418">Reach: from a spoken request to a guided touch</text>
+<rect x="30" y="70" width="250" height="800" rx="14" fill="#F2F4F7" stroke="#009E73" stroke-width="2"/>
+<text x="46" y="102" font-size="20" font-weight="700" fill="#009E73">Devices</text>
+<rect x="310" y="70" width="860" height="800" rx="14" fill="#F2F4F7" stroke="#0072B2" stroke-width="2"/>
+<text x="326" y="102" font-size="20" font-weight="700" fill="#0072B2">Laptop (Windows or macOS), all local</text>
+<rect x="1200" y="70" width="370" height="800" rx="14" fill="#F2F4F7" stroke="#D55E00" stroke-width="2"/>
+<text x="1216" y="102" font-size="20" font-weight="700" fill="#D55E00">Meta Model API</text>
+<polyline points="260.0,190.0 330.0,190.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<text x="295.0" y="182.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">frames</text>
+<polyline points="580.0,190.0 610.0,190.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<polyline points="860.0,190.0 890.0,190.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<polyline points="1150.0,193.6 1220.0,195.5" fill="none" stroke="#5B6573" stroke-width="2" marker-start="url(#a)" marker-end="url(#a)"/>
+<polyline points="260.0,430.0 330.0,430.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<text x="295.0" y="422.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">audio</text>
+<polyline points="455.0,490.0 455.0,545.0 1185.0,545.0 1185.0,430.0 1220.0,430.0" fill="none" stroke="#5B6573" stroke-width="2" marker-start="url(#a)" marker-end="url(#a)"/>
+<text x="1035.0" y="537.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">speech out, text back</text>
+<polyline points="741.2,250.0 752.7,360.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<text x="747.0" y="297.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">fingertip</text>
+<polyline points="955.0,250.0 835.8,360.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<text x="895.4" y="297.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">target</text>
+<polyline points="580.0,430.0 610.0,430.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<polyline points="910.0,430.0 940.0,430.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<polyline points="910.0,487.6 1220.0,606.6" fill="none" stroke="#5B6573" stroke-width="2" marker-start="url(#a)" marker-end="url(#a)"/>
+<text x="1185.0" y="580.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">touch check</text>
+<polyline points="665.1,500.0 543.1,590.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<text x="604.1" y="537.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">cue</text>
+<polyline points="752.2,500.0 741.1,600.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<text x="746.7" y="542.0" font-size="14" text-anchor="middle" fill="#4A5562" paint-order="stroke" stroke="#F2F4F7" stroke-width="5">phrase</text>
+<polyline points="610.0,655.0 580.0,655.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<polyline points="330.0,655.0 260.0,655.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<polyline points="840.9,500.0 956.4,600.0" fill="none" stroke="#5B6573" stroke-width="2" marker-end="url(#a)"/>
+<rect x="50" y="130" width="210" height="120" rx="10" fill="#FFFFFF" stroke="#009E73" stroke-width="2.5"/>
+<rect x="50" y="130" width="8" height="120" rx="3" fill="#009E73"/>
+<text x="70" y="160" font-size="20" font-weight="700" fill="#101418">Phone camera</text>
+<text x="70" y="186" font-size="16" fill="#4A5562">held in one hand</text>
+<text x="70" y="208" font-size="16" fill="#4A5562">640×480, about 29 fps</text>
+<text x="70" y="230" font-size="16" fill="#4A5562">~125 ms to the laptop</text>
+<rect x="50" y="380" width="210" height="100" rx="10" fill="#FFFFFF" stroke="#009E73" stroke-width="2.5"/>
+<rect x="50" y="380" width="8" height="100" rx="3" fill="#009E73"/>
+<text x="70" y="410" font-size="20" font-weight="700" fill="#101418">Microphone</text>
+<text x="70" y="436" font-size="16" fill="#4A5562">laptop mic</text>
+<text x="70" y="458" font-size="16" fill="#4A5562">streamed at 24 kHz</text>
+<rect x="50" y="600" width="210" height="110" rx="10" fill="#FFFFFF" stroke="#009E73" stroke-width="2.5"/>
+<rect x="50" y="600" width="8" height="110" rx="3" fill="#009E73"/>
+<text x="70" y="630" font-size="20" font-weight="700" fill="#101418">Headphones</text>
+<text x="70" y="656" font-size="16" fill="#4A5562">stereo guide sound</text>
+<text x="70" y="678" font-size="16" fill="#4A5562">earcons and speech</text>
+<rect x="330" y="130" width="250" height="120" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="330" y="130" width="8" height="120" rx="3" fill="#0072B2"/>
+<text x="350" y="160" font-size="20" font-weight="700" fill="#101418">Capture</text>
+<text x="350" y="186" font-size="16" fill="#4A5562">newest-frame ring</text>
+<text x="350" y="208" font-size="16" fill="#4A5562">reconnects a stalled</text>
+<text x="350" y="230" font-size="16" fill="#4A5562">phone stream</text>
+<rect x="610" y="130" width="250" height="120" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="610" y="130" width="8" height="120" rx="3" fill="#0072B2"/>
+<text x="630" y="160" font-size="20" font-weight="700" fill="#101418">Hand tracking</text>
+<text x="630" y="186" font-size="16" fill="#4A5562">MediaPipe landmarks</text>
+<text x="630" y="208" font-size="16" fill="#4A5562">One Euro fingertip</text>
+<text x="630" y="230" font-size="16" fill="#4A5562">p95 12 to 23 ms</text>
+<rect x="890" y="130" width="260" height="120" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="890" y="130" width="8" height="120" rx="3" fill="#0072B2"/>
+<text x="910" y="160" font-size="20" font-weight="700" fill="#101418">Target propagation</text>
+<text x="910" y="186" font-size="16" fill="#4A5562">table homography,</text>
+<text x="910" y="208" font-size="16" fill="#4A5562">hand masked out</text>
+<text x="910" y="230" font-size="16" fill="#4A5562">p50 5 to 13 ms</text>
+<rect x="330" y="370" width="250" height="120" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="330" y="370" width="8" height="120" rx="3" fill="#0072B2"/>
+<text x="350" y="400" font-size="20" font-weight="700" fill="#101418">Voice client</text>
+<text x="350" y="426" font-size="16" fill="#4A5562">endpointing stream</text>
+<text x="350" y="448" font-size="16" fill="#4A5562">local grammar</text>
+<text x="350" y="470" font-size="16" fill="#4A5562">speech end to command ~0.5 s</text>
+<rect x="610" y="360" width="300" height="140" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="610" y="360" width="8" height="140" rx="3" fill="#0072B2"/>
+<text x="630" y="390" font-size="20" font-weight="700" fill="#101418">Session state machine</text>
+<text x="630" y="416" font-size="16" fill="#4A5562">deterministic, per hand frame</text>
+<text x="630" y="438" font-size="16" fill="#4A5562">contact rule: inside, still,</text>
+<text x="630" y="460" font-size="16" fill="#4A5562">mask overlap</text>
+<text x="630" y="482" font-size="16" fill="#4A5562">every step logged</text>
+<rect x="940" y="370" width="210" height="120" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="940" y="370" width="8" height="120" rx="3" fill="#0072B2"/>
+<text x="960" y="400" font-size="20" font-weight="700" fill="#101418">Event log</text>
+<text x="960" y="426" font-size="16" fill="#4A5562">exact replay of</text>
+<text x="960" y="448" font-size="16" fill="#4A5562">every session</text>
+<rect x="330" y="590" width="250" height="130" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="330" y="590" width="8" height="130" rx="3" fill="#0072B2"/>
+<text x="350" y="620" font-size="20" font-weight="700" fill="#101418">Sound engine</text>
+<text x="350" y="646" font-size="16" fill="#4A5562">pan: left or right</text>
+<text x="350" y="668" font-size="16" fill="#4A5562">pitch: closer or farther</text>
+<text x="350" y="690" font-size="16" fill="#4A5562">pulse: distance</text>
+<text x="350" y="712" font-size="16" fill="#4A5562">48 kHz, 5 ms blocks</text>
+<rect x="610" y="600" width="250" height="110" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="610" y="600" width="8" height="110" rx="3" fill="#0072B2"/>
+<text x="630" y="630" font-size="20" font-weight="700" fill="#101418">Local speech</text>
+<text x="630" y="656" font-size="16" fill="#4A5562">Windows SAPI or</text>
+<text x="630" y="678" font-size="16" fill="#4A5562">macOS say, cached</text>
+<text x="630" y="700" font-size="16" fill="#4A5562">starts in ~5 ms</text>
+<rect x="890" y="600" width="260" height="110" rx="10" fill="#FFFFFF" stroke="#0072B2" stroke-width="2.5"/>
+<rect x="890" y="600" width="8" height="110" rx="3" fill="#0072B2"/>
+<text x="910" y="630" font-size="20" font-weight="700" fill="#101418">Screen</text>
+<text x="910" y="656" font-size="16" fill="#4A5562">camera view, captions,</text>
+<text x="910" y="678" font-size="16" fill="#4A5562">sound and status</text>
+<rect x="1220" y="130" width="330" height="140" rx="10" fill="#FFFFFF" stroke="#D55E00" stroke-width="2.5"/>
+<rect x="1220" y="130" width="8" height="140" rx="3" fill="#D55E00"/>
+<text x="1240" y="160" font-size="20" font-weight="700" fill="#101418">SAM 3.1</text>
+<text x="1240" y="186" font-size="16" fill="#4A5562">object from a noun phrase:</text>
+<text x="1240" y="208" font-size="16" fill="#4A5562">boxes, masks, confidence</text>
+<text x="1240" y="230" font-size="16" fill="#4A5562">p50 ~0.8 s, applied late</text>
+<text x="1240" y="252" font-size="16" fill="#4A5562">without losing the hand</text>
+<rect x="1220" y="360" width="330" height="140" rx="10" fill="#FFFFFF" stroke="#D55E00" stroke-width="2.5"/>
+<rect x="1220" y="360" width="8" height="140" rx="3" fill="#D55E00"/>
+<text x="1240" y="390" font-size="20" font-weight="700" fill="#101418">Muse Voice Transcribe</text>
+<text x="1240" y="416" font-size="16" fill="#4A5562">realtime endpointing</text>
+<text x="1240" y="438" font-size="16" fill="#4A5562">keyword biasing</text>
+<text x="1240" y="460" font-size="16" fill="#4A5562">natural requests via Spark</text>
+<rect x="1220" y="590" width="330" height="160" rx="10" fill="#FFFFFF" stroke="#D55E00" stroke-width="2.5"/>
+<rect x="1220" y="590" width="8" height="160" rx="3" fill="#D55E00"/>
+<text x="1240" y="620" font-size="20" font-weight="700" fill="#101418">Muse Spark 1.3</text>
+<text x="1240" y="646" font-size="16" fill="#4A5562">two-image touch check</text>
+<text x="1240" y="668" font-size="16" fill="#4A5562">(before reach vs touch)</text>
+<text x="1240" y="690" font-size="16" fill="#4A5562">what is on the table</text>
+<text x="1240" y="712" font-size="16" fill="#4A5562">structured JSON, store off</text>
+<text x="30" y="892" font-size="15" fill="#4A5562">Times are measured medians or 95th percentiles from our runs; the camera and SAM times dominate. Orange: Meta Model API. Blue: local. Green: devices.</text>
+</svg>

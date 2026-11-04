@@ -1,301 +1,167 @@
 # Reach
 
-Voice-guided hand-to-object finding for blind and low-vision people, using a phone camera, Meta's SAM 3.1, and stereo sound cues.
+**Say what you're looking for, and sound guides your hand to it.**
 
-> **Status:** in development. Built during the Meta Global AI Developer Hackathon, Oct 27 to Nov 4, 2026.
+Reach helps blind and low-vision people find an object on a table. You hold your
+phone over the table and say "find the wallet". Meta's SAM 3.1 finds the wallet in
+the camera view, your hand is tracked on the laptop, and stereo sound steers your
+fingers toward it: left or right in your ears, pitch for closer or farther, pulses
+that speed up as you get near. When you touch it, a chime plays and Muse Spark checks
+that it is the object you asked for.
 
-Current camera checks use a phone held in one hand while the other hand reaches, on both an Android phone and an iPhone. Body-worn capture has not been validated.
+**Demo video:** _link added at submission_
 
-Reach is a prototype for locating non-hazardous objects on a tabletop within arm's reach. It is not a medical device and not a mobility aid.
+![Reach guiding a hand to a wallet: the camera view with the wallet outlined and an arrow from the fingertip, and a side panel showing the state, the sound and status](docs/screen.jpg)
 
-## Development setup
+Built for the Meta Global AI Developer Hackathon, Oct 27 to Nov 4, 2026, by
+Varun Bhandari and Chaitanya Manik.
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.12. Works on Windows and macOS.
+## Why
+
+Finding something you just put down is a small task that repeats all day. Without
+sight it usually means sweeping your hands across the table and knocking things
+over. Existing apps can describe a scene or help aim the phone at an object; Reach
+closes the last half metre by guiding the hand itself, and tells you what you
+touched.
+
+## How it works
+
+![Architecture: devices, local processing on the laptop, and the three Meta models, with measured timings](docs/architecture.png)
+
+1. **You ask.** The microphone streams to **Muse Voice Transcribe** (realtime,
+   with endpointing and keyword biasing). A local grammar turns "find the wallet",
+   "what's on the table", "stop", "louder" or "help" into a command in about half a
+   second after you stop speaking. Requests it doesn't recognise but that sound like a
+   request, in any language, go to **Muse Spark** as text and come back as a
+   structured command.
+2. **SAM 3.1 finds it.** A camera frame and the noun phrase go to **SAM 3.1**,
+   which returns every match with a box, a mask and a confidence. Between results,
+   Reach carries the target along by tracking the table itself, with the hand masked
+   out, so the lock survives your hand covering the object and late results are
+   applied to the current frame in under a millisecond.
+3. **Your hand is tracked locally.** MediaPipe finds the hand on every frame; a
+   filtered fingertip with a little prediction drives the sound.
+4. **Sound guides you.**
+
+   | You hear | It means |
+   |---|---|
+   | The tone moves left or right | the object is to that side |
+   | Higher pitch / lower pitch | farther from you / closer to you |
+   | Faster pulses | you are getting close |
+   | A soft hiss | your hand is level with the object |
+   | Two rising notes, two falling notes | target found / target lost |
+   | A chord | you are touching it |
+
+   The sound is synthesised in 5 ms blocks, and Reach's spoken phrases are mixed
+   into the same stereo stream, so the guide ducks while it speaks.
+5. **Contact, then a check.** Contact fires when the fingertip is inside the target,
+   nearly still relative to it, and the hand covers part of its mask for three
+   frames. Then **Muse Spark** compares a picture of the object from before your hand
+   arrived with the moment of touch and answers in strict JSON: same object or not.
+   A wrong object is excluded and guidance resumes.
+6. **Everything replays.** One deterministic state machine makes every decision,
+   and each step logs its inputs and outputs. `reach replay` rebuilds a whole
+   session from its log, with no camera, models or network, and checks that every
+   decision matches.
+
+More: two of the same object are told apart by "left" or "right"; "what's on the
+table" lists what Muse Spark sees; requests for sharp or hot things are refused;
+Hindi works on macOS; a high-contrast view helps low-vision users; and the phone
+stream reconnects by itself if Wi-Fi stalls.
+
+## How Reach uses Meta's models
+
+- **SAM 3.1** is the perception layer of a closed control loop, not a one-off
+  detector: open-vocabulary phrases ("blue pen", "mug"), masks used for the contact
+  test, confidence and instance lists used to ask "left or right", and results
+  re-seeded into a local table tracker so a 0.8 s cloud call never stalls 30 Hz
+  guidance.
+- **Muse Voice Transcribe** runs as one continuous endpointing session with keyword
+  biasing for object and command words; "stop" acts on the partial transcript
+  without waiting for the end of the turn.
+- **Muse Spark 1.3** does three jobs with structured output: a two-image identity
+  check at touch time (before vs after the reach), a list of objects on the table,
+  and turning free-form or non-English requests into commands. All requests use the
+  standard tier with `store: false`.
+
+What we tried and dropped: using SAM to find the hand as well (one concept per
+request doubled the cost and latency, so MediaPipe tracks the hand locally);
+appearance trackers such as KCF and CSRT for the target (they follow the hand when
+it covers the object); and a single-image touch check (it called a pen a "stylus";
+the two-image comparison had no false rejections on 60 saved correct pairs).
+
+## Results
+
+| | Windows, Android phone | Mac, iPhone |
+|---|---|---|
+| Spoken commands understood | 20/20 | 20/20 |
+| End of speech to command, median | 531 ms | 515 ms |
+| Sighted touches with a correct chime | 10/10 | 10/10 |
+| Eyes-covered touches within 45 s | 5/5 (two objects) | not completed |
+| Touch check on saved pairs: same / different object | 30/30 / 15/15 | 30/30 / 15/15 |
+| 10-minute sessions without an audio dropout | yes | yes |
+
+Full tables, latency per stage and what went wrong: [RESULTS.md](RESULTS.md).
+
+## Limitations
+
+The only testers were the two of us, sighted, with our eyes covered, which shows
+the loop works with a person in it but not that it suits blind users; that testing
+is the next step. Guidance is in the image plane of a hand-held phone, so it has no
+true depth and assumes the phone is held roughly level over the table. Cloud
+latency varies (Muse Spark took 1.4 to 5.6 s), and the Mac setup used Bluetooth
+headphones, which add about 165 ms. Details: [EVALUATION.md](EVALUATION.md).
+
+## Run it
+
+Requires Python 3.12 with [uv](https://docs.astral.sh/uv/), Windows or macOS,
+a phone camera (an Android phone running IP Webcam, or an iPhone through Continuity
+Camera), wired or stereo headphones, and a Meta Model API key.
 
 ```
-uv python install 3.12
 uv sync
+copy .env.example .env      # add your MODEL_API_KEY (cp on macOS)
+uv run reach setup          # choose camera, stereo output and microphone
+uv run reach start          # hold the phone over the table and say "find the ..."
+```
+
+Download the [MediaPipe hand model](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task)
+to `models/hand_landmarker.task` first. Without any devices or network you can
+still replay the included session and render sample screens:
+
+```
+uv run reach replay sample_trial
+uv run reach ui-preview --out runs/ui-preview
 uv run pytest
 ```
 
-Copy `.env.example` to `.env` and add your own Meta Model API key. Never commit `.env`.
+Every option, key and component interface is in [docs/development.md](docs/development.md).
 
-Capture, hand tracking, stereo guidance, target perception and the overlay are
-implemented, along with microphone commands, local speech mixing, the session
-reducer and the contact heuristic. Live recognition and contact accuracy still
-need hardware validation. The independent `reach speak` command checks local
-speech without opening the microphone or camera.
+## Built during the hackathon
 
-Save the [official hand model](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task)
-as `models/hand_landmarker.task`, or set `hand.model_path` in your local config.
-Choose a stereo output with `uv run reach devices`. Use wired headphones and low
-system volume for the direction check.
+All code in this repository was written between Oct 27 and Nov 4, 2026; the first
+commit is dated Oct 27. Pre-existing libraries and assets we use: MediaPipe and its
+hand landmarker model, OpenCV, NumPy, sounddevice (PortAudio), websockets, the
+OpenAI Python SDK (pointed at the Meta Model API), meta-sam-parser, Pillow, PyYAML,
+python-dotenv, comtypes and pyttsx3 on Windows, the operating systems' built-in
+speech voices, and the Atkinson Hyperlegible and Noto Sans Devanagari fonts.
 
-```sh
-uv run reach setup      # pick the camera, stereo output and microphone once
-uv run reach start      # handheld guidance with those settings
-uv run reach run --mount handheld --source path/to/clip.mp4 --mute --sam-cache read
-uv run reach earcons
-```
+## Scope and privacy
 
-`reach setup` lists cameras, stereo outputs and microphones, then writes the
-ignored `config.local.yaml`. On a Mac, choose the MacBook microphone: using
-AirPods as the microphone switches them to call audio, which removes stereo.
-`reach start` accepts the same options as `reach run`.
+Reach is a hackathon prototype, not a medical device and not a mobility aid. It is
+only for finding non-hazardous objects on a tabletop within arm's reach, and its
+answers can be wrong; always confirm by touch. Camera frames go only to the Meta
+Model API standard tier, which does not use them for training; microphone audio is
+streamed for transcription and not saved; logs stay on your computer. See
+[EVALUATION.md](EVALUATION.md) for the full statements.
 
-Click a point to guide toward it without API requests. Keys 1–4 choose wallet,
-pen, ball and apple and send images to the configured Meta segmentation API;
-`c` cancels, `r` rechecks, `y`/`n` answer, `m` toggles sound, `u` switches
-between the presentation and debug screens, `l` toggles the high-contrast
-low-vision view and `q` quits.
-`v` starts tap-to-talk; tap it again after speaking to request the final transcript.
-File runs use the cache
-automatically; `--sam-cache read` prevents network requests on cache misses.
+## Credits
 
-`--predict 0` disables velocity prediction; `--predict 0.5` enables it. Hand
-inference defaults to two hands. `--hand-width 480 --max-hands 1` is an explicit
-performance fallback for a single reaching hand; it disables two-hand selection.
-The overlay detects an inverted wrist orientation; use `--flip off` or `on`
-after checking cue directions if automatic flipping is unsuitable.
-
-Live runs open the configured microphone and stream audio to Meta for commands.
-`--no-voice` disables this; file and muted runs disable it unless `--voice` is
-explicit. `--voice-input "Microphone Array"` selects the laptop input on Windows.
-Use headphones to keep synthesized speech out of the microphone. `--speech off`
-keeps captions without spoken output; `--contact off` disables automatic contact.
-
-Run `--duration 600 --speech-every 5` for an endurance run with periodic local
-speech. Optional `--trials 5 --trial-mode click`, `phrase` or `voice` provides
-timed trials. Voice mode announces the scripted target and waits for its find
-command. Space starts once a target is ready; for an eyes-covered trial press
-Space with eyes open, then cover eyes before reaching. Stop reaching before
-uncovering to press `t` for a reported touch or `f` for failure. `n` prepares the
-next trial. The default time limit is 45 seconds. Automatic contact timestamps
-and operator reports are recorded separately; a chime does not establish touch.
-
-An interrupted scripted run can continue in a new folder with
-`--resume-trials path/to/old/run --trials ORIGINAL_TOTAL`. Keep its original
-objects, trial mode, seed, time limit, mount, prediction and camera source.
-Completed trial outcomes, including failures, are retained; the interrupted
-trial starts again with a fresh timer and its original target. The old files are
-read only and fingerprinted. Reports label the recovered sequence and preserve
-the original interruption separately; current-session timing and errors remain
-separate from the earlier process.
-
-Each run saves a manifest, events, JPEG frames and a summary under ignored
-`runs/`. Logs can contain microphone transcripts as well as images; keep runs
-local and do not commit them. Raw microphone audio is not saved.
-`uv run reach report path/to/run` summarizes voice and speech timing, reconnects,
-state durations, contact firings, audio underflows and trial paths.
-Voice latency measures receipt of the server's speech-end event to receipt of
-the complete turn. Reports also separate a local speech-end estimate using
-capture timestamps, calibrated energy in 20 ms subframes and a 200 ms hangover.
-This estimate is not phoneme-aligned ground truth; turns with audio drops,
-overflows or invalid capture timestamps have no valid local latency.
-Tap-to-talk measures the second tap to the final transcript; these measurements
-have different starting points.
-`--camera-latency-ms` adds an earlier measured camera median to a
-component estimate; this is not a measured end-to-end latency distribution.
-
-Shared defaults live in `config.yaml`. Put machine-specific camera settings in
-the ignored `config.local.yaml`; nested values override the defaults. Keep API
-keys only in `.env`. Shared messages are defined in `src/reach/types.py`.
-
-MediaPipe Tasks can send usage and performance metrics to Google; see its
-[Python documentation](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker/python).
+Varun Bhandari and Chaitanya Manik. Fonts: Atkinson Hyperlegible (Braille
+Institute) and Noto Sans Devanagari, both under the SIL Open Font License 1.1; the
+licence files are in `src/reach/assets/fonts/`. The demo video's narration uses an
+ElevenLabs AI voice.
 
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
-
-## Target perception integration
-
-`Perception(config, camera, log)` runs scene motion and one segmentation worker.
-The camera must already be open and running. It supplies
-`wait_newer(last_id, timeout) -> (Frame, image) | None` and
-`get_jpeg(frame_id) -> bytes | None`; each frame hash must match that JPEG.
-Call `start()`, `set_phrase("wallet")` or `select_point(x, y)`, and feed hand
-observations with `on_hand(hand)`. Read `latest()` for guidance and `stats()`
-for overlay diagnostics. Call `stop()` before closing `EventLog`.
-
-`latest()` returns no target when motion fails or camera frames are over
-500 ms old. A new SAM result can recover a lost target. Use a textured table
-or placemat. `motion.method: kcf` selects the appearance-tracker fallback;
-its masks are unavailable and it can follow the hand during occlusion.
-`force_query()` requests a refresh while retaining the idle, backoff and
-one-request guards. Unknown and idle states send no images.
-
-Only `sam-3.1` is accepted by the segmentation client. It makes one streaming
-request with no retries and a three-second deadline. Frames and a noun phrase
-are sent to Meta's standard API in phrase mode. Click mode makes no API calls.
-Default objects are wallet, pen, ball and apple; other nouns in the voice
-keywords file have not been measured on these setups.
-
-Set `sam.cache` in the configuration to `off`, `read` or `write`. The default
-`auto` uses `write` for file sources and `off` for live sources. `write` reads
-existing entries and populates misses; misses send an image. `read` is strictly
-local and reports a miss without calling the API. The runner can map its
-`--sam-cache` option to this setting. Cache files live under ignored
-`runs/sam-cache/` and are keyed by image bytes, phrase, model, confidence cutoff
-and dimensions. Run folders can contain sensitive images; keep them local.
-
-## Local speech
-
-`uv run reach speak "Found the wallet." --count 5` synthesizes speech into the
-configured stereo guidance stream without opening the camera or microphone.
-Windows uses SAPI in memory; macOS expects the shared `say_engine` adapter.
-Unavailable engines retain captions and report a fallback. Linux uses silent
-samples for device-free tests. These fallbacks do not validate audible speech.
-Speech is cached and trimmed before playback, and ducks guidance by 16 dB.
-The reported first-audio time ends at the output callback; it excludes the
-device's acoustic playback delay.
-
-Late segmentation results also receive a conservative appearance check using
-`camera.get(frame_id)` and the stored source mask. A large color disagreement
-in a clear target region clears guidance and requests a fresh frame. Visible
-hand occlusion exempts this check. `motion.appearance_guard` controls it; the
-check detects gross changes and does not establish object identity. Repeated
-selection of the same phrase refreshes the search without discarding a pending
-result or a current lock.
-
-The deterministic command/session/contact components and local speech engine
-are described in [session integration](docs/session-integration.md).
-`reach replay-contact RUN_DIR --frames` reconstructs contact from saved reducer
-inputs and masks when available, and labels older box-only logs explicitly.
-It runs without network or device access; logged geometry cannot prove touch.
-
-## Touched-object read-back and recording
-
-With the confirming reducer installed, contact starts a single asynchronous
-standard `muse-spark-1.3` request while the chime plays immediately. The marked
-crop includes the target and hand. Requests explicitly set `store: false` and
-contributor model IDs are refused. Standard mode does not use content for model
-training; disabling response storage does not establish a retention guarantee.
-See Meta's [Responses API](https://dev.meta.ai/docs/protocols/responses) and
-[pricing modes](https://dev.meta.ai/docs/pricing-rate-limits).
-
-`--readback off` disables image read-back. `--spark-cache read` uses saved local
-answers only, including on cache misses. `auto` reads and writes a local cache
-for file sources and disables caching for live sources. The default effort is
-`minimal`, with image detail `low`; API and audio timings are reported separately.
-Use `reach readback-probe crop.jpg --phrase wallet --count 5` to measure a saved
-crop explicitly. This command uploads the crop and prints valid answers and
-errors, rather than opening a device.
-
-`--record` saves `overlay.mp4` at 30 fps and the exact rendered stereo output
-mix as `output.wav`, with their monotonic start times in the log. Keep both
-files to align them in an editor. `--record-format avi` uses MJPEG if the editor
-cannot import MP4. Audio recording uses a bounded writer ring; overruns are
-logged and silence fills lost blocks to preserve the timeline. Recordings and
-read-back caches stay local under ignored `runs/`. Recording requires audio
-output; it does not save raw microphone audio.
-
-The on-screen cost total is an estimate from configured prices, images sent,
-streamed voice seconds and returned Spark token usage. It is not an invoice or
-a statement of available credits.
-
-Controller confirmation, spatial selection and deterministic offline replay are
-documented in [the integration reference](docs/confirmation.md).
-`reach replay RUN_DIR` verifies recorded inputs/outputs without a camera or API;
-`--strip OUTPUT_DIR` writes a fresh events-only copy with canonical command text.
-
-When a clean pre-reach target crop is available, read-back compares that reference
-with the contact crop. The result answers whether the same physical object was
-touched, so a different name such as "stylus" does not by itself reject a pen.
-Without a clean reference it uses the single-image check and reports that mode.
-Wait for **Ref ready** before reaching when checking paired confirmation. A clean
-reference survives an automatic detection refresh; changing the requested target,
-choosing an instance or excluding one clears it until a new clear view is captured.
-`reach readback-probe contact.jpg --reference reference.jpg --phrase pen --count 3`
-explicitly uploads both saved images. Cache identities include both image hashes.
-
-## Scene listing and natural requests
-
-The scene client lists up to six visible objects and their image positions. Its
-worker runs independently of read-back and keeps a local cache for file sources.
-The deadline defaults to six seconds. Set `scene.deadline_s` in the local config
-to allow a longer wait, up to twenty seconds; the worker and controller share
-this limit, and stop/cancel still take effect immediately. The default image
-size is 512 pixels on the long
-side with low detail; `scene.image_long_side` and `scene.detail` are configurable.
-Press **D** or ask "what's on the table?",
-then request one of the listed objects by name.
-
-When the local grammar cannot understand a request, a bounded text-only fallback
-can interpret everyday phrasing or another language. It sends text only when
-there is a request cue or non-ASCII lettering, uses a three-second deadline, and
-never retries automatically. Set `parse.enabled: false` to disable it. Parsed
-commands retain their source and language; a late reply cannot undo a voice stop.
-Windows speech replies stay English. Scene and fallback requests use standard
-Spark with `store: false`, as described in Meta's
-[Responses API](https://dev.meta.ai/docs/protocols/responses).
-
-Sharp and hot object requests receive a spoken refusal before any grounding
-request. Scene lists mention a recognized hazard only as a warning. Refusals
-apply equally to local commands and parsed natural requests. This tool is for
-non-hazardous tabletop objects; object names returned by a model can be wrong.
-
-## Mac stereo and Hindi speech
-
-Use the MacBook microphone for input and select AirPods as the system output.
-Reach reads the live CoreAudio output route every two seconds. A low sample
-rate or a change away from the starting output mutes guidance, announces the
-loss and blocks starting a timed trial. Reconnecting the original stereo
-output restores guidance and announces recovery. Unknown route metadata is
-labeled explicitly; it is not a stereo measurement. Selecting an AirPods
-microphone is refused before opening the input stream.
-
-On macOS, English and Hindi request bias and the installed Lekha voice are
-configured by default. `tts.voices` selects a voice per language. Hindi commands
-use their spoken object names in checked-in Hindi templates; SAM still receives
-an English target. Fixed phrases for both languages are rendered before the
-microphone starts. Windows continues to speak English. The phrase tables in
-`config/phrases/` can be reviewed or edited without making translation calls.
-The first bilingual preparation can take a few minutes and prints progress;
-its configured deadline is five minutes. Named voices reuse a validated local
-sample cache on later starts. Voice, rate, output sample rate and OS version
-are part of that cache identity; changing the unnamed system default does not
-reuse a persistent voice cache.
-
-Keep a round object supported on a folded cloth so it cannot roll, and touch
-with a visible index fingertip before lifting it. Briefly held hand poses may
-maintain guidance, but cannot accumulate contact dwell time.
-
-## What you see and hear
-
-The screen is 16:9. The camera image fills the left side and is never covered:
-only the target outline, other candidates, the fingertip, a guidance arrow and a
-ring that pulses with the guide sound are drawn on it. The side panel shows, top
-to bottom:
-
-- what Reach is doing, in plain words ("Guiding to the pen", "Hand out of view")
-- what you said and what Reach is saying, each cleared a few seconds after it ends
-- the sound: left and right loudness, a closer-to-farther pitch scale and the pulse rate
-- the touched-object check or the list of objects on the table
-- voice, stereo and camera status
-
-`--ui presentation` hides developer details and is the default with `--record`;
-`--ui debug` adds frame rate, timing, cost and the key list. `--overlay-scale 2`
-draws a sharp 1920×1080 screen (1280×720 at scale 1). Mouse clicks are mapped
-back to camera pixels; clicks on the side panel are ignored. `--record` saves the
-screen and the rendered stereo mix locally. Colours come from the Okabe-Ito
-colour-blind-safe palette, and every coloured mark also has a shape or label.
-`reach ui-preview --out DIR` renders sample screens without a camera or network.
-
-Spoken commands, besides "find" and an object name: "what's on the table",
-"help", "louder", "quieter", "less talking", "more talking", "repeat",
-"recheck", "stop" and "cancel". Reach greets you once speech is ready and
-describes positions as on your left or right, closer to you or farther away.
-
-Text uses Atkinson Hyperlegible, designed by the Braille Institute for low-vision
-readers, and Noto Sans Devanagari for Hindi. Both are under the SIL Open Font
-License 1.1; the licence files are in `src/reach/assets/fonts/`.
-
-## Event timelines
-
-`reach report RUN_DIR --html timeline.html` exports a self-contained HTML/SVG
-timeline with state, distance, pan, pitch, commands, speech, model activity,
-contact and trial lanes. Hover over bars or open the event table for details.
-The report labels latency origins and omits raw microphone transcripts. Stripped
-events-only runs work without devices, image files or API access; missing
-measurements remain visibly absent.

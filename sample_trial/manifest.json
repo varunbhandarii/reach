@@ -1,0 +1,81 @@
+{
+  "config": {
+    "brain": {
+      "veto_s": 1.2,
+      "search_prompt_s": 4,
+      "every_s": 6,
+      "give_up_s": 20,
+      "hand_lost_speak_s": 1.5,
+      "target_lost_s": 1.0,
+      "target_lost_speak_s": 2.0,
+      "target_give_up_s": 15,
+      "network_speak_every_s": 15,
+      "readback_wait_s": 2.5,
+      "mismatch_confidence": 0.6,
+      "disambiguate_s": 8,
+      "ask_touch_enabled": false,
+      "ask_touch_s": 1.5,
+      "prediction": 0.5
+    },
+    "safety": {
+      "blocked_terms": [
+        "knife",
+        "knives",
+        "blade",
+        "razor",
+        "scissors",
+        "needle",
+        "cutter",
+        "saw",
+        "glass shard",
+        "broken glass",
+        "lighter",
+        "match",
+        "matches",
+        "candle",
+        "stove",
+        "oven",
+        "pan",
+        "pot",
+        "kettle",
+        "iron",
+        "hot",
+        "boiling",
+        "burner",
+        "grill"
+      ]
+    },
+    "contact": {
+      "overlap_min": 0.1,
+      "box_grow": 0.2,
+      "min_margin_px": 12,
+      "still_speed": 0.25,
+      "refractory_s": 2.0,
+      "still_ms": 150,
+      "hold_frames": 3,
+      "enabled": true
+    },
+    "audio": {
+      "gain": 0.2
+    },
+    "sam": {
+      "tie_margin": 0.15
+    },
+    "spark": {
+      "enabled": true,
+      "deadline_s": 6.0
+    },
+    "prediction": 0.5,
+    "objects": [
+      "wallet",
+      "pen"
+    ]
+  },
+  "objects": [
+    "wallet",
+    "pen"
+  ],
+  "contract_version": "6",
+  "source": "events_only",
+  "replay_only": true
+}
