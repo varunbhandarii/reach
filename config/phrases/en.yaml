@@ -50,6 +50,7 @@ phrases:
   found_brief: 'Found {object}.'
 objects:
   wallet: wallet
+  point: point
   pen: pen
   ball: ball
   apple: apple

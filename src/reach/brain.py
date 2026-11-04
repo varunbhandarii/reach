@@ -91,7 +91,12 @@ class Brain:
         self.language = 'hi' if (command.language or 'en').split('-')[0].casefold() == 'hi' else 'en'
         self.spoken_phrase = command.spoken_phrase
 
+    def _plain(self):
+        return self.params.get('point_words', 'legacy') == 'plain'
+
     def _name(self):
+        if self.phrase == 'clicked point' and self._plain():
+            return 'the point'
         return f'the {self.phrase}' if self.phrase else 'the selected point'
 
     def _transition(self, now, state, effects, reason, *, force=False):
@@ -125,7 +130,8 @@ class Brain:
         self._scene_pending = None
         if (self.phrase == phrase and self.state in ('SEARCHING','GUIDING')):
             effects.append(Effect('force_query'))
-            self._speak(effects,'Checking.','checking',0)
+            if not (phrase == 'clicked point' and self._plain()):
+                self._speak(effects,'Checking.','checking',0)  # a new click just moves the point
             return
         self.phrase = phrase
         self._search_start = now
